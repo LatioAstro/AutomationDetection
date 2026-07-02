@@ -21,6 +21,7 @@ PYTHON_FILES = ROOT / 'PythonFiles'
 # Downloaded LightCurves and outputs will be stored in this directory.
 OUTPUT_DIR = ROOT / 'DownloadedLC'
 INCREMENTAL_OUTPUT_DIR = OUTPUT_DIR / 'incremental'
+SOURCES_DIR = ROOT / 'Sources'
 INCREMENTAL_WEEKLY_SUMMARY_PATH = INCREMENTAL_OUTPUT_DIR / 'weekly_incremental_summary.csv'
 
 sys.path.insert(0, str(PYTHON_FILES))
@@ -593,6 +594,120 @@ def save_json_state(path: Path, payload: dict) -> None:
 		json.dump(payload, handle, indent=2, sort_keys=True)
 
 
+def source_json_path_for_name(source_name: str) -> Path:
+	safe_name = source_name.replace(' ', '_').replace('/', '_')
+	return SOURCES_DIR / f'{safe_name}.json'
+
+
+def _format_interval_label(mdp99_value: float | int | np.floating | None) -> str | None:
+	if mdp99_value is None:
+		return None
+	try:
+		if not np.isfinite(mdp99_value):
+			return None
+	except TypeError:
+		return None
+	return f'MDP99: {float(mdp99_value):.2f}%'
+
+
+def _rounded_interval_key(start_mjd: float, end_mjd: float) -> tuple[float, float]:
+	return (round(float(start_mjd), 6), round(float(end_mjd), 6))
+
+
+def write_source_json_output(
+	*,
+	source_name: str,
+	result: pd.DataFrame,
+	factor_row: pd.Series | None,
+	json_path: Path,
+	active_rows: pd.DataFrame,
+	flare_intervals: list[tuple[float, float]],
+	flare_mdp_labels: list[tuple[float, float, float]],
+) -> None:
+	json_path.parent.mkdir(parents=True, exist_ok=True)
+	existing_payload = load_json_state(json_path)
+	existing_points = existing_payload.get('points', []) if isinstance(existing_payload, dict) else []
+	existing_intervals = existing_payload.get('flareIntervals', []) if isinstance(existing_payload, dict) else []
+
+	cutoff_mjd = float(result.iloc[0]['new_point_mjd']) if not result.empty else np.nan
+	retained_points = []
+	for point in existing_points:
+		try:
+			point_mjd = float(point.get('mjd', np.nan))
+		except (TypeError, ValueError):
+			point_mjd = np.nan
+		if np.isfinite(point_mjd) and np.isfinite(cutoff_mjd) and point_mjd < cutoff_mjd:
+			retained_points.append(point)
+
+	label_lookup = {_rounded_interval_key(start_mjd, end_mjd): label for start_mjd, end_mjd, label in flare_mdp_labels}
+	new_points = []
+	for _, row in result.iterrows():
+		point_is_flare = bool(row.get('potential_flare_point', False) or row.get('flare_active', False) or row.get('confirmed_flare_active', False))
+		new_points.append(
+			{
+				'mjd': float(row['new_point_mjd']),
+				'flux': float(row['new_point_flux']),
+				'error': float(row['new_point_flux_error']),
+				'flare': point_is_flare,
+			}
+		)
+
+	retained_intervals = []
+	for interval in existing_intervals:
+		try:
+			interval_end = float(interval.get('end', np.nan))
+		except (TypeError, ValueError):
+			interval_end = np.nan
+		if np.isfinite(interval_end) and np.isfinite(cutoff_mjd) and interval_end < cutoff_mjd:
+			retained_intervals.append(interval)
+
+	new_intervals = []
+	for start_mjd, end_mjd in flare_intervals:
+		interval_label = label_lookup.get(_rounded_interval_key(start_mjd, end_mjd))
+		new_interval = {
+			'start': float(start_mjd),
+			'end': float(end_mjd),
+		}
+		if interval_label is not None:
+			new_interval['label'] = interval_label
+		new_intervals.append(new_interval)
+
+	latest_row = result.iloc[-1]
+	background_value = float(latest_row['previous_quiescent_background']) if np.isfinite(latest_row['previous_quiescent_background']) else np.nan
+	threshold_value = float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row['flare_flux_threshold']) else np.nan
+	if not np.isfinite(background_value):
+		background_value = np.nan
+	if not np.isfinite(threshold_value):
+		threshold_value = np.nan
+
+	payload = {
+		'source': source_name,
+		'background': background_value,
+		'threshold': threshold_value,
+		'points': retained_points + new_points,
+		'flareIntervals': retained_intervals + new_intervals,
+		'_scanState': {
+			'lastProcessedMjd': float(latest_row['new_point_mjd']),
+			'lastProcessedBinCount': int(latest_row['current_bin_count']),
+			'potentialStreak': int(latest_row['consecutive_potential_flare_points']),
+			'potentialStreakStartMjd': float(latest_row['flare_start_mjd']) if np.isfinite(latest_row['flare_start_mjd']) else np.nan,
+			'confirmedActive': bool(latest_row['confirmed_flare_active']),
+			'confirmedStartMjd': float(latest_row['confirmed_flare_start_mjd']) if np.isfinite(latest_row['confirmed_flare_start_mjd']) else np.nan,
+		},
+	}
+
+	if factor_row is not None and 'Int_flux_ratio' in factor_row.index:
+		try:
+			flux_scale = float(factor_row['Int_flux_ratio'])
+		except (TypeError, ValueError):
+			flux_scale = np.nan
+		if np.isfinite(flux_scale) and flux_scale > 0:
+			payload['_scanState']['fluxScale'] = flux_scale
+
+	with json_path.open('w', encoding='utf-8') as handle:
+		json.dump(payload, handle, indent=2, sort_keys=True)
+
+
 def send_email_notification(
 	*,
 	smtp_host: str,
@@ -664,6 +779,7 @@ def build_incremental_summary_for_source(
 	factor_match = factor_table.loc[factor_table['Name'] == source_name]
 	factor_row = factor_match.iloc[-1] if not factor_match.empty else None
 	result = add_incremental_mdp99_columns(result, factor_row, cosi_background_rate=float(args.cosi_background_rate), arm_reduction=float(args.arm_reduction), average_mu=float(args.mdp99_average_mu))
+	source_json_path = source_json_path_for_name(source_name)
 
 	INCREMENTAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 	safe_name = source_name.replace(' ', '_').replace('/', '_')
@@ -685,8 +801,6 @@ def build_incremental_summary_for_source(
 	latest_mdp99 = float(latest_row['mdp99_percent']) if np.isfinite(latest_row['mdp99_percent']) else np.nan
 	latest_mdp99_available = bool(latest_row['mdp99_available'])
 	latest_potential_mdp99 = latest_mdp99 if latest_potential else np.nan
-	potential_plot_path = ''
-	confirmed_plot_path = ''
 	flare_intervals = build_active_intervals(active_rows, start_column='flare_start_mjd')
 	flare_mdp_labels = build_interval_mdp_labels(active_rows, start_column='flare_start_mjd')
 	confirmed_intervals = build_active_intervals(confirmed_rows, start_column='confirmed_flare_start_mjd')
@@ -740,61 +854,16 @@ def build_incremental_summary_for_source(
 				f"(latest active MDP99={latest_active_mdp99:.2f}%)"
 			)
 
-	if latest_active or latest_potential or latest_confirmed_active:
-		cadence_df = notebook_pipeline.load_weekly_database(Path(args.db_path), cadence=str(args.lightcurve_cadence))
-		_, time_values, flux_values, error_values, _ = notebook_pipeline.build_source_arrays(cadence_df, source_name)
-		plot_scale_factor = 1.0
-		y_axis_label = r'Photon Flux (ph cm$^{-2}$ s$^{-1}$)'
-		if factor_row is not None:
-			int_flux_ratio = float(factor_row['Int_flux_ratio']) if 'Int_flux_ratio' in factor_row.index else np.nan
-			if np.isfinite(int_flux_ratio) and int_flux_ratio > 0:
-				plot_scale_factor = float(int_flux_ratio)
-				y_axis_label = r'COSI-band Photon Flux (ph cm$^{-2}$ s$^{-1}$)'
-		plot_df = pd.DataFrame({'time_MJD': time_values, 'flux': flux_values * plot_scale_factor, 'flux_error': error_values * plot_scale_factor})
-		lookback_days = float(args.lookback_weeks) * 7.0
-		window_end_mjd = float(plot_df['time_MJD'].max())
-		window_start_target = window_end_mjd - lookback_days
-		window_df = plot_df.loc[plot_df['time_MJD'] >= window_start_target].copy()
-		if window_df.empty:
-			window_df = plot_df.tail(1).copy()
-		window_size = int(len(window_df))
-		window_start_mjd = float(window_df['time_MJD'].iloc[0])
-		window_end_mjd = float(window_df['time_MJD'].iloc[-1])
-		potential_mjds = result.loc[
-			result['potential_flare_point'] | result['flare_active'],
-			'new_point_mjd',
-		].astype(float)
-		potential_points_plot = plot_df.loc[plot_df['time_MJD'].isin(set(potential_mjds.tolist()))].copy()
-		if latest_active or latest_potential:
-			potential_plot_path_obj = INCREMENTAL_OUTPUT_DIR / f'{safe_name}_potential_last_{int(float(args.lookback_weeks))}w_thr{threshold_tag}.png'
-			plot_light_curve(
-				plot_df, source_name, potential_plot_path_obj, f'Potential flare view (last {float(args.lookback_weeks):g} weeks, {window_size} bins, COSI flux-scaled)',
-				y_label=y_axis_label, time_range=(window_start_mjd, window_end_mjd), flare_points=potential_points_plot,
-				flare_intervals=flare_intervals, flare_mdp_labels=flare_mdp_labels,
-				quiescent_background=float(latest_row['previous_quiescent_background']) * plot_scale_factor if np.isfinite(latest_row['previous_quiescent_background']) else None,
-				flare_threshold=float(latest_row['flare_flux_threshold']) * plot_scale_factor if np.isfinite(latest_row['flare_flux_threshold']) else None,
-			)
-			potential_plot_path = str(potential_plot_path_obj.relative_to(ROOT))
-			print(f'Wrote potential flare plot to {potential_plot_path}')
-
-		confirmed_mjds = result.loc[
-			result['confirmed_flare_active'] | result['confirmed_start_trigger'],
-			'new_point_mjd',
-		].astype(float)
-		confirmed_points_plot = plot_df.loc[plot_df['time_MJD'].isin(set(confirmed_mjds.tolist()))].copy()
-		if latest_confirmed_active:
-			confirmed_plot_path_obj = INCREMENTAL_OUTPUT_DIR / f'{safe_name}_confirmed_last_{int(float(args.lookback_weeks))}w_thr{threshold_tag}.png'
-			plot_light_curve(
-				plot_df, source_name, confirmed_plot_path_obj, f'Confirmed flare view (last {float(args.lookback_weeks):g} weeks, {window_size} bins, COSI flux-scaled)',
-				y_label=y_axis_label, time_range=(window_start_mjd, window_end_mjd), flare_points=confirmed_points_plot,
-				flare_intervals=confirmed_intervals, flare_mdp_labels=None,
-				quiescent_background=float(latest_row['previous_quiescent_background']) * plot_scale_factor if np.isfinite(latest_row['previous_quiescent_background']) else None,
-				flare_threshold=None,
-			)
-			confirmed_plot_path = str(confirmed_plot_path_obj.relative_to(ROOT))
-			print(f'Wrote confirmed flare plot to {confirmed_plot_path}')
-	else:
-		print('No potential, active, or confirmed flare points were available for plotting.')
+	write_source_json_output(
+		 source_name=source_name,
+		 result=result,
+		 factor_row=factor_row,
+		 json_path=source_json_path,
+		 active_rows=active_rows,
+		 flare_intervals=flare_intervals,
+		 flare_mdp_labels=flare_mdp_labels,
+	)
+	print(f'Wrote source JSON to {source_json_path.relative_to(ROOT)}')
 	print(f'Wrote incremental scan to {output_path.relative_to(ROOT)}')
 
 	summary_row = {
@@ -829,9 +898,10 @@ def build_incremental_summary_for_source(
 		'omit_from_attention': omit_from_attention,
 		'quiescent_background_origin': qb_origin,
 		'scan_csv': str(output_path.relative_to(ROOT)),
-		'flare_plot': potential_plot_path,
-		'potential_flare_plot': potential_plot_path,
-		'confirmed_flare_plot': confirmed_plot_path,
+		'source_json': str(source_json_path.relative_to(ROOT)),
+		'flare_plot': '',
+		'potential_flare_plot': '',
+		'confirmed_flare_plot': '',
 	}
 	return summary_row, result
 

@@ -1,4 +1,5 @@
 import copy
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -452,6 +453,7 @@ def incremental_flare_scan(
     confirmed_sigma_threshold=2.0,
     consecutive_points=3,
     cache_path=DEFAULT_INCREMENTAL_CACHE,
+    source_json_path=None,
 ):
     cadence = normalize_cadence(cadence)
     detection_method = str(detection_method).strip().lower()
@@ -461,16 +463,35 @@ def incremental_flare_scan(
     cadence_df = load_weekly_database(database_path, cadence=cadence)
     _, time_values, flux_values, error_values, average_flux = build_source_arrays(cadence_df, source_name)
 
-    lookback_days = float(lookback_weeks) * 7.0
-    latest_mjd = float(np.max(time_values))
-    window_start_mjd = latest_mjd - lookback_days
-    lookback_mask = time_values >= window_start_mjd
-    time_values = time_values[lookback_mask]
-    flux_values = flux_values[lookback_mask]
-    error_values = error_values[lookback_mask]
+    source_json_path = Path(source_json_path) if source_json_path is not None else None
+    cached_json = {}
+    if source_json_path is not None and source_json_path.exists():
+        try:
+            with source_json_path.open('r', encoding='utf-8') as handle:
+                cached_json = json.load(handle)
+        except Exception:
+            cached_json = {}
+
+    start_index = 0
+    cached_state = cached_json.get('_scanState', {}) if isinstance(cached_json, dict) else {}
+    if source_json_path is not None and cached_json:
+        cached_points = cached_json.get('points', []) if isinstance(cached_json, dict) else []
+        if cached_points:
+            last_cached_point = cached_points[-1]
+            last_cached_mjd = float(last_cached_point.get('mjd', np.nan))
+            if np.isfinite(last_cached_mjd):
+                cached_matches = np.where(np.isclose(time_values, last_cached_mjd, atol=1e-6))[0]
+                if cached_matches.size > 0:
+                    start_index = int(cached_matches[-1]) + 1
+    if start_index >= len(time_values):
+        start_index = max(0, len(time_values) - 30)
+
+    time_values = time_values[start_index:]
+    flux_values = flux_values[start_index:]
+    error_values = error_values[start_index:]
     if len(time_values) < 2:
         raise ValueError(
-            f'Not enough cadence bins in the last {lookback_weeks:g} weeks for {source_name} at cadence={cadence}.'
+            f'Not enough cadence bins to analyze {source_name} at cadence={cadence}.'
         )
 
     qb_result = resolve_quiescent_background(
@@ -490,12 +511,13 @@ def incremental_flare_scan(
     qb_sigma = float(source_qb_err) if np.isfinite(source_qb_err) and source_qb_err > 0 else 0.0
 
     rows = []
-    streak = 0
-    streak_start_index = None
-    confirmed_active = False
-    confirmed_start_mjd = np.nan
+    streak = int(cached_state.get('potential_streak', 0)) if isinstance(cached_state, dict) else 0
+    streak_start_mjd = float(cached_state.get('potential_streak_start_mjd', np.nan)) if isinstance(cached_state, dict) else np.nan
+    confirmed_active = bool(cached_state.get('confirmed_active', False)) if isinstance(cached_state, dict) else False
+    confirmed_start_mjd = float(cached_state.get('confirmed_start_mjd', np.nan)) if isinstance(cached_state, dict) else np.nan
 
     for current_index in range(1, len(time_values)):
+        global_index = int(start_index + current_index)
         new_flux = float(flux_values[current_index])
         new_flux_error = float(error_values[current_index])
         previous_flux_value = float(flux_values[current_index - 1])
@@ -513,17 +535,14 @@ def incremental_flare_scan(
 
         if potential_candidate:
             streak += 1
-            if streak_start_index is None:
-                streak_start_index = current_index
+            if not np.isfinite(streak_start_mjd):
+                streak_start_mjd = float(time_values[current_index])
         else:
             streak = 0
-            streak_start_index = None
+            streak_start_mjd = np.nan
 
         flare_active = (streak >= consecutive_points) if detection_method in {'original', 'both'} else False
-        if streak_start_index is None:
-            flare_start_mjd = np.nan
-        else:
-            flare_start_mjd = float(time_values[streak_start_index])
+        flare_start_mjd = float(streak_start_mjd) if np.isfinite(streak_start_mjd) else np.nan
 
         if confirmed_active:
             if np.isfinite(source_qb) and new_flux < source_qb:
@@ -536,8 +555,8 @@ def incremental_flare_scan(
         rows.append(
             {
                 'Name': source_name,
-                'previous_bin_count': int(current_index),
-                'current_bin_count': int(current_index + 1),
+                'previous_bin_count': int(global_index),
+                'current_bin_count': int(global_index + 1),
                 'new_point_mjd': float(time_values[current_index]),
                 'new_point_flux': new_flux,
                 'new_point_flux_error': new_flux_error,
