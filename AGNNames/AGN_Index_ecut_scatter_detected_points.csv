@@ -1,0 +1,8 @@
+spectral_index,ecut_keV,is_upper_limit,spectral_index_err_low,spectral_index_err_high,ecut_err_low,ecut_err_high,label
+1.64,300.0,False,0.02,0.02,30.0,50.0,NGC 2110
+1.52,150.0,False,0.08,0.08,30.0,60.0,Mrk 3
+1.93,150.0,False,0.02,0.02,10.0,10.0,MCG -05-23-016
+1.64,210.0,False,0.06,0.08,40.0,120.0,NGC 4388
+1.765,550.0,False,0.007,0.007,90.0,140.0,Cen A
+1.67,330.0,False,0.04,0.04,100.0,150.0,NGC 5252
+1.79,110.0,False,0.02,0.02,10.0,10.0,NGC 5506

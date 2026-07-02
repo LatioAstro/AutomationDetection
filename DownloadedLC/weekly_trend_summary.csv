@@ -1,0 +1,2 @@
+Name,total_points,new_points,last_met_seen,points_used,window_start_mjd,window_end_mjd,slope_per_day,weekly_slope,start_flux,end_flux,flux_change,percent_change,r_value,rising,test_curve_csv,test_curve_plot
+4FGL J2253.9+1609,882,882,799329601.0,8,61105.500754444445,61161.500754444445,3.217503217476291e-11,2.2522522522334035e-10,3.4199999999999997e-07,3.89e-07,4.700000000000004e-08,13.742690058479546,0.008820317752576558,True,DownloadedLC/test_curves/4FGL_J2253.9+1609_synthetic_weekly.csv,DownloadedLC/test_curves/4FGL_J2253.9+1609_synthetic_weekly.png

@@ -1,0 +1,2 @@
+Name,cadence,percent,quiescent_background,quiescent_background_error,detection_threshold,points_used,source_time_end_mjd,updated_at_utc
+4FGL DUMMY J9999.9+9999,weekly,0.3,3.134418333509627e-07,1.2060453783110546e-08,4.437767255172263e-07,15,60098.0,2026-05-12T15:01:53.637074+00:00

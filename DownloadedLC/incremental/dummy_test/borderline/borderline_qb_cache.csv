@@ -1,0 +1,2 @@
+Name,cadence,percent,quiescent_background,quiescent_background_error,detection_threshold,points_used,source_time_end_mjd,updated_at_utc
+4FGL DUMMY BORDERLINE J9999.9+9998,weekly,0.3,3.026915988719483e-07,1.264911064067352e-08,3.776523010951301e-07,13,60234.0,2026-05-11T19:43:32.599095+00:00
