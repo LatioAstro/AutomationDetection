@@ -474,6 +474,9 @@ def incremental_flare_scan(
 
     start_index = 0
     cached_state = cached_json.get('_scanState', {}) if isinstance(cached_json, dict) else {}
+    tail_floor_index = max(0, len(time_values) - 30)
+    last_cached_index = None
+
     if source_json_path is not None and cached_json:
         cached_points = cached_json.get('points', []) if isinstance(cached_json, dict) else []
         if cached_points:
@@ -482,9 +485,44 @@ def incremental_flare_scan(
             if np.isfinite(last_cached_mjd):
                 cached_matches = np.where(np.isclose(time_values, last_cached_mjd, atol=1e-6))[0]
                 if cached_matches.size > 0:
-                    start_index = int(cached_matches[-1]) + 1
+                    last_cached_index = int(cached_matches[-1])
+
+    if last_cached_index is None:
+        start_index = 0
+    else:
+        # Analyze at least the latest 30 points; if cache is farther behind, analyze the full gap.
+        start_index = min(int(last_cached_index) + 1, tail_floor_index)
+
+    if source_json_path is not None and cached_json:
+        existing_intervals = cached_json.get('flareIntervals', []) if isinstance(cached_json, dict) else []
+        latest_interval = None
+        for interval in existing_intervals:
+            try:
+                interval_start = float(interval.get('start', np.nan))
+                interval_end = float(interval.get('end', np.nan))
+            except (TypeError, ValueError):
+                continue
+            if (not np.isfinite(interval_start)) or (not np.isfinite(interval_end)):
+                continue
+            if interval_end < interval_start:
+                interval_start, interval_end = interval_end, interval_start
+            if latest_interval is None or interval_end > latest_interval[1]:
+                latest_interval = (interval_start, interval_end)
+
+        if latest_interval is not None:
+            latest_start, latest_end = latest_interval
+            end_matches = np.where(np.isclose(time_values, latest_end, atol=1e-6))[0]
+            if end_matches.size > 0:
+                latest_end_index = int(end_matches[-1])
+                points_from_latest_end = int((len(time_values) - 1) - latest_end_index)
+                if points_from_latest_end <= 35:
+                    start_matches = np.where(np.isclose(time_values, latest_start, atol=1e-6))[0]
+                    if start_matches.size > 0:
+                        latest_start_index = int(start_matches[0])
+                        start_index = min(start_index, latest_start_index)
+
     if start_index >= len(time_values):
-        start_index = max(0, len(time_values) - 30)
+        start_index = tail_floor_index
 
     time_values = time_values[start_index:]
     flux_values = flux_values[start_index:]
@@ -511,10 +549,26 @@ def incremental_flare_scan(
     qb_sigma = float(source_qb_err) if np.isfinite(source_qb_err) and source_qb_err > 0 else 0.0
 
     rows = []
-    streak = int(cached_state.get('potential_streak', 0)) if isinstance(cached_state, dict) else 0
-    streak_start_mjd = float(cached_state.get('potential_streak_start_mjd', np.nan)) if isinstance(cached_state, dict) else np.nan
-    confirmed_active = bool(cached_state.get('confirmed_active', False)) if isinstance(cached_state, dict) else False
-    confirmed_start_mjd = float(cached_state.get('confirmed_start_mjd', np.nan)) if isinstance(cached_state, dict) else np.nan
+    restore_cached_state = last_cached_index is not None and int(start_index) == int(last_cached_index) + 1
+
+    def _get_cached_state_value(*keys, default=None):
+        if not isinstance(cached_state, dict):
+            return default
+        for key in keys:
+            if key in cached_state:
+                return cached_state.get(key)
+        return default
+
+    if restore_cached_state:
+        streak = int(_get_cached_state_value('potential_streak', 'potentialStreak', default=0) or 0)
+        streak_start_mjd = float(_get_cached_state_value('potential_streak_start_mjd', 'potentialStreakStartMjd', default=np.nan))
+        confirmed_active = bool(_get_cached_state_value('confirmed_active', 'confirmedActive', default=False))
+        confirmed_start_mjd = float(_get_cached_state_value('confirmed_start_mjd', 'confirmedStartMjd', default=np.nan))
+    else:
+        streak = 0
+        streak_start_mjd = np.nan
+        confirmed_active = False
+        confirmed_start_mjd = np.nan
 
     for current_index in range(1, len(time_values)):
         global_index = int(start_index + current_index)

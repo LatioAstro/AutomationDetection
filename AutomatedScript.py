@@ -3,6 +3,7 @@ import importlib
 import html
 import json
 import os
+import shutil
 import smtplib
 import sys
 from datetime import date
@@ -22,6 +23,7 @@ PYTHON_FILES = ROOT / 'PythonFiles'
 OUTPUT_DIR = ROOT / 'DownloadedLC'
 INCREMENTAL_OUTPUT_DIR = OUTPUT_DIR / 'incremental'
 SOURCES_DIR = ROOT / 'Sources'
+WEBSITE_SOURCE_DATA_DIR = Path('/home/lkoo/projects/autodetectwebsite/data/src_data')
 INCREMENTAL_WEEKLY_SUMMARY_PATH = INCREMENTAL_OUTPUT_DIR / 'weekly_incremental_summary.csv'
 
 sys.path.insert(0, str(PYTHON_FILES))
@@ -610,8 +612,110 @@ def _format_interval_label(mdp99_value: float | int | np.floating | None) -> str
 	return f'MDP99: {float(mdp99_value):.2f}%'
 
 
+def _extract_mdp99_from_label(label: str | None) -> float:
+	if not isinstance(label, str):
+		return np.nan
+	stripped = label.strip()
+	if not stripped:
+		return np.nan
+	if stripped.lower().startswith('mdp99:'):
+		stripped = stripped.split(':', 1)[1].strip()
+	if stripped.endswith('%'):
+		stripped = stripped[:-1].strip()
+	try:
+		value = float(stripped)
+	except (TypeError, ValueError):
+		return np.nan
+	return value if np.isfinite(value) else np.nan
+
+
 def _rounded_interval_key(start_mjd: float, end_mjd: float) -> tuple[float, float]:
 	return (round(float(start_mjd), 6), round(float(end_mjd), 6))
+
+
+def _intervals_overlap(interval_a: dict, interval_b: dict) -> bool:
+	return float(interval_a['start']) <= float(interval_b['end']) and float(interval_b['start']) <= float(interval_a['end'])
+
+
+def _normalize_interval_payload(interval: dict) -> dict | None:
+	try:
+		start_mjd = float(interval.get('start', np.nan))
+		end_mjd = float(interval.get('end', np.nan))
+	except (TypeError, ValueError):
+		return None
+	if (not np.isfinite(start_mjd)) or (not np.isfinite(end_mjd)):
+		return None
+	if end_mjd < start_mjd:
+		start_mjd, end_mjd = end_mjd, start_mjd
+	normalized = {'start': start_mjd, 'end': end_mjd}
+	raw_mdp99 = interval.get('mdp99', np.nan)
+	try:
+		mdp99_value = float(raw_mdp99)
+	except (TypeError, ValueError):
+		mdp99_value = np.nan
+	if not np.isfinite(mdp99_value):
+		mdp99_value = np.nan
+	label = interval.get('label')
+	if isinstance(label, str) and label.strip():
+		normalized['label'] = label.strip()
+	if not np.isfinite(mdp99_value):
+		mdp99_value = _extract_mdp99_from_label(normalized.get('label'))
+	if np.isfinite(mdp99_value):
+		normalized['mdp99'] = float(mdp99_value)
+		if 'label' not in normalized:
+			normalized['label'] = _format_interval_label(mdp99_value)
+	return normalized
+
+
+def _merge_flare_intervals(existing_intervals: list[dict], new_intervals: list[dict]) -> list[dict]:
+	combined: list[dict] = []
+	for interval in existing_intervals:
+		normalized = _normalize_interval_payload(interval)
+		if normalized is not None:
+			normalized['_source'] = 'old'
+			combined.append(normalized)
+	for interval in new_intervals:
+		normalized = _normalize_interval_payload(interval)
+		if normalized is not None:
+			normalized['_source'] = 'new'
+			combined.append(normalized)
+
+	if not combined:
+		return []
+
+	combined.sort(key=lambda interval: (float(interval['start']), float(interval['end']), 0 if interval.get('_source') == 'old' else 1))
+	merged: list[dict] = []
+	current = dict(combined[0])
+
+	for interval in combined[1:]:
+		if _intervals_overlap(current, interval):
+			current['start'] = min(float(current['start']), float(interval['start']))
+			current['end'] = max(float(current['end']), float(interval['end']))
+			current_mdp99 = current.get('mdp99', np.nan)
+			interval_mdp99 = interval.get('mdp99', np.nan)
+			if interval.get('_source') == 'new' and np.isfinite(interval_mdp99):
+				current['mdp99'] = float(interval_mdp99)
+			elif (not np.isfinite(current_mdp99)) and np.isfinite(interval_mdp99):
+				current['mdp99'] = float(interval_mdp99)
+			current_label = current.get('label')
+			interval_label = interval.get('label')
+			if interval.get('_source') == 'new' and isinstance(interval_label, str) and interval_label.strip():
+				current['label'] = interval_label.strip()
+			elif (not isinstance(current_label, str) or not current_label.strip()) and isinstance(interval_label, str) and interval_label.strip():
+				current['label'] = interval_label.strip()
+			if np.isfinite(current.get('mdp99', np.nan)):
+				current['label'] = _format_interval_label(current['mdp99'])
+			if interval.get('_source') == 'new':
+				current['_source'] = 'new'
+			continue
+
+		current.pop('_source', None)
+		merged.append(current)
+		current = dict(interval)
+
+	current.pop('_source', None)
+	merged.append(current)
+	return merged
 
 
 def write_source_json_output(
@@ -639,38 +743,36 @@ def write_source_json_output(
 		if np.isfinite(point_mjd) and np.isfinite(cutoff_mjd) and point_mjd < cutoff_mjd:
 			retained_points.append(point)
 
-	label_lookup = {_rounded_interval_key(start_mjd, end_mjd): label for start_mjd, end_mjd, label in flare_mdp_labels}
+	mdp99_lookup = {_rounded_interval_key(start_mjd, end_mjd): mdp99 for start_mjd, end_mjd, mdp99 in flare_mdp_labels}
 	new_points = []
 	for _, row in result.iterrows():
-		point_is_flare = bool(row.get('potential_flare_point', False) or row.get('flare_active', False) or row.get('confirmed_flare_active', False))
+		rise_method = bool(row.get('confirmed_flare_active', False))
+		count_method = bool(row.get('flare_active', False))
+		point_is_flare = bool(row.get('potential_flare_point', False) or count_method or rise_method)
 		new_points.append(
 			{
 				'mjd': float(row['new_point_mjd']),
 				'flux': float(row['new_point_flux']),
 				'error': float(row['new_point_flux_error']),
 				'flare': point_is_flare,
+				'RiseMethod': rise_method,
+				'3CountMethod': count_method,
 			}
 		)
 
-	retained_intervals = []
-	for interval in existing_intervals:
-		try:
-			interval_end = float(interval.get('end', np.nan))
-		except (TypeError, ValueError):
-			interval_end = np.nan
-		if np.isfinite(interval_end) and np.isfinite(cutoff_mjd) and interval_end < cutoff_mjd:
-			retained_intervals.append(interval)
-
 	new_intervals = []
 	for start_mjd, end_mjd in flare_intervals:
-		interval_label = label_lookup.get(_rounded_interval_key(start_mjd, end_mjd))
+		interval_mdp99 = mdp99_lookup.get(_rounded_interval_key(start_mjd, end_mjd), np.nan)
 		new_interval = {
 			'start': float(start_mjd),
 			'end': float(end_mjd),
 		}
-		if interval_label is not None:
-			new_interval['label'] = interval_label
+		if np.isfinite(interval_mdp99):
+			new_interval['mdp99'] = float(interval_mdp99)
+			new_interval['label'] = _format_interval_label(interval_mdp99)
 		new_intervals.append(new_interval)
+
+	merged_intervals = _merge_flare_intervals(existing_intervals, new_intervals)
 
 	latest_row = result.iloc[-1]
 	background_value = float(latest_row['previous_quiescent_background']) if np.isfinite(latest_row['previous_quiescent_background']) else np.nan
@@ -685,7 +787,7 @@ def write_source_json_output(
 		'background': background_value,
 		'threshold': threshold_value,
 		'points': retained_points + new_points,
-		'flareIntervals': retained_intervals + new_intervals,
+		'flareIntervals': merged_intervals,
 		'_scanState': {
 			'lastProcessedMjd': float(latest_row['new_point_mjd']),
 			'lastProcessedBinCount': int(latest_row['current_bin_count']),
@@ -706,6 +808,16 @@ def write_source_json_output(
 
 	with json_path.open('w', encoding='utf-8') as handle:
 		json.dump(payload, handle, indent=2, sort_keys=True)
+
+
+def sync_source_json_files_to_website() -> int:
+	WEBSITE_SOURCE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+	count = 0
+	for json_path in sorted(SOURCES_DIR.glob('*.json')):
+		shutil.copy2(json_path, WEBSITE_SOURCE_DATA_DIR / json_path.name)
+		count += 1
+	print(f'Copied {count} source JSON file(s) to {WEBSITE_SOURCE_DATA_DIR}')
+	return count
 
 
 def send_email_notification(
@@ -772,14 +884,26 @@ def build_incremental_summary_for_source(
 	threshold_multiplier: float | None = None,
 ) -> tuple[dict, pd.DataFrame]:
 	run_threshold_multiplier = float(args.flare_threshold_multiplier) if threshold_multiplier is None else float(threshold_multiplier)
-	result = notebook_pipeline.incremental_flare_scan(source_name=source_name, database_path=Path(args.db_path), percent=float(args.incremental_percent), cadence=str(args.lightcurve_cadence), lookback_weeks=float(args.lookback_weeks), detection_method=str(args.detection_method), flare_threshold_multiplier=run_threshold_multiplier, confirmed_sigma_threshold=float(args.confirmed_sigma_threshold), consecutive_points=int(args.consecutive_points), cache_path=Path(args.qb_cache_path))
+	source_json_path = source_json_path_for_name(source_name)
+	result = notebook_pipeline.incremental_flare_scan(
+		source_name=source_name,
+		database_path=Path(args.db_path),
+		percent=float(args.incremental_percent),
+		cadence=str(args.lightcurve_cadence),
+		lookback_weeks=float(args.lookback_weeks),
+		detection_method=str(args.detection_method),
+		flare_threshold_multiplier=run_threshold_multiplier,
+		confirmed_sigma_threshold=float(args.confirmed_sigma_threshold),
+		consecutive_points=int(args.consecutive_points),
+		cache_path=Path(args.qb_cache_path),
+		source_json_path=source_json_path,
+	)
 	if result.empty:
 		raise ValueError(f'No incremental rows were produced for {source_name}.')
 
 	factor_match = factor_table.loc[factor_table['Name'] == source_name]
 	factor_row = factor_match.iloc[-1] if not factor_match.empty else None
 	result = add_incremental_mdp99_columns(result, factor_row, cosi_background_rate=float(args.cosi_background_rate), arm_reduction=float(args.arm_reduction), average_mu=float(args.mdp99_average_mu))
-	source_json_path = source_json_path_for_name(source_name)
 
 	INCREMENTAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 	safe_name = source_name.replace(' ', '_').replace('/', '_')
@@ -1181,6 +1305,7 @@ def run_incremental_mode(args: argparse.Namespace) -> int:
 	print(f'Wrote combined weekly incremental summary to {INCREMENTAL_WEEKLY_SUMMARY_PATH.relative_to(ROOT)}')
 
 	maybe_send_weekly_detection_email_multi(args, detections_by_multiplier, summary_paths_by_multiplier)
+	sync_source_json_files_to_website()
 
 	if had_source_failures:
 		return 1
