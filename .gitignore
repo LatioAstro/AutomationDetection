@@ -2,4 +2,7 @@ AutomationDetection
 weekly_email.env
 weekly_email.env.example
 PythonFiles/new_db_Aug2025.csv
+PythonFiles/new_db_Aug2025_weekly.csv
+PythonFiles/new_db_Aug2025_daily.csv
+PythonFiles/new_db_Aug2025_monthly.csv
 PythonFiles/__pycache__

@@ -12,7 +12,7 @@ import LC
 ROOT = Path(__file__).resolve().parent.parent
 PYTHON_FILES = ROOT / 'PythonFiles'
 COSICSV = ROOT / 'COSICSV'
-DEFAULT_DB_PATH = PYTHON_FILES / 'new_db_Aug2025.csv'
+DEFAULT_DB_PATH = PYTHON_FILES / 'new_db_Aug2025_weekly.csv'
 DEFAULT_FACTOR_TABLE = COSICSV / 'COSI_factors_all_updated_only_logpar_flare_updated_60deg_offaxis_last.csv'
 DEFAULT_OUTPUT_DIR = ROOT / 'RemadeNov2025'
 DEFAULT_INCREMENTAL_CACHE = ROOT / 'DownloadedLC' / 'incremental' / 'quiescent_background_cache.csv'

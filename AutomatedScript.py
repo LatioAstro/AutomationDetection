@@ -6,7 +6,7 @@ import os
 import shutil
 import smtplib
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from email.message import EmailMessage
 from email.utils import make_msgid
 from pathlib import Path
@@ -599,6 +599,84 @@ def save_json_state(path: Path, payload: dict) -> None:
 def source_json_path_for_name(source_name: str) -> Path:
 	safe_name = source_name.replace(' ', '_').replace('/', '_')
 	return SOURCES_DIR / f'{safe_name}.json'
+
+
+def cadence_window_days(cadence: str) -> float:
+	key = str(cadence).strip().lower()
+	if key in {'3day', '3-day', 'daily'}:
+		return 3.0
+	if key == 'weekly':
+		return 7.0
+	if key == 'monthly':
+		return 30.0
+	raise ValueError(f'Unsupported cadence for recency check: {cadence}')
+
+
+def current_mjd_utc() -> float:
+	# Unix epoch to MJD conversion: MJD = unix_seconds / 86400 + 40587.
+	return datetime.now(timezone.utc).timestamp() / 86400.0 + 40587.0
+
+
+def latest_source_json_mjd(path: Path) -> float:
+	payload = load_json_state(path)
+	if not isinstance(payload, dict):
+		return np.nan
+	points = payload.get('points', [])
+	if not isinstance(points, list) or not points:
+		return np.nan
+	latest = np.nan
+	for point in points:
+		if not isinstance(point, dict):
+			continue
+		try:
+			value = float(point.get('mjd', np.nan))
+		except (TypeError, ValueError):
+			value = np.nan
+		if np.isfinite(value):
+			latest = value if (not np.isfinite(latest) or value > latest) else latest
+	return latest
+
+
+def should_skip_source_recent_json(source_json_path: Path, cadence: str) -> tuple[bool, str]:
+	if not source_json_path.exists():
+		return False, 'no source JSON cache found'
+
+	latest_mjd = latest_source_json_mjd(source_json_path)
+	if not np.isfinite(latest_mjd):
+		return False, 'source JSON has no valid MJD points'
+
+	now_mjd = current_mjd_utc()
+	window_days = cadence_window_days(cadence)
+	age_days = float(now_mjd - latest_mjd)
+	if age_days <= window_days:
+		return True, f'latest JSON bin is {age_days:.2f} days old (<= {window_days:.1f} day cadence window)'
+	return False, f'latest JSON bin is {age_days:.2f} days old (> {window_days:.1f} day cadence window)'
+
+
+def cleanup_incremental_scan_csvs() -> tuple[int, int]:
+	removed_count = 0
+	removed_bytes = 0
+	patterns = [
+		'*_incremental_scan_thr*.csv',
+		'weekly_incremental_summary_thr*.csv',
+	]
+	for pattern in patterns:
+		for path in INCREMENTAL_OUTPUT_DIR.glob(pattern):
+			if path.name == INCREMENTAL_WEEKLY_SUMMARY_PATH.name:
+				continue
+			if not path.is_file():
+				continue
+			try:
+				size = path.stat().st_size
+			except OSError:
+				size = 0
+			try:
+				path.unlink()
+			except OSError:
+				continue
+			removed_count += 1
+			removed_bytes += int(size)
+	return removed_count, removed_bytes
 
 
 def _format_interval_label(mdp99_value: float | int | np.floating | None) -> str | None:
@@ -1242,13 +1320,21 @@ def run_incremental_mode(args: argparse.Namespace) -> int:
 	detections_by_multiplier: dict[float, pd.DataFrame] = {}
 	summary_paths_by_multiplier: dict[float, Path] = {}
 	had_source_failures = False
+	total_skipped_sources = 0
 
 	INCREMENTAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 	for multiplier in threshold_multipliers:
 		print(f'Running incremental scan with flare threshold multiplier={multiplier:g}')
 		summaries = []
 		failures = []
+		skipped_sources = []
 		for source_name in target_sources:
+			source_json_path = source_json_path_for_name(source_name)
+			skip_source, skip_reason = should_skip_source_recent_json(source_json_path, str(args.lightcurve_cadence))
+			if skip_source:
+				print(f'{source_name}: skipped - {skip_reason}')
+				skipped_sources.append(source_name)
+				continue
 			try:
 				summary_row, _ = build_incremental_summary_for_source(
 					args,
@@ -1262,8 +1348,15 @@ def run_incremental_mode(args: argparse.Namespace) -> int:
 				failures.append(source_name)
 				if args.source:
 					had_source_failures = True
+		total_skipped_sources += len(skipped_sources)
 		if not summaries:
-			print(f'No sources were processed successfully for multiplier={multiplier:g}.')
+			if skipped_sources and not failures:
+				print(
+					f'No sources needed processing for multiplier={multiplier:g}; '
+					f'skipped {len(skipped_sources)} source(s) based on recent JSON bins.'
+				)
+			else:
+				print(f'No sources were processed successfully for multiplier={multiplier:g}.')
 			continue
 
 		summary_df = pd.DataFrame(summaries).sort_values(
@@ -1292,11 +1385,14 @@ def run_incremental_mode(args: argparse.Namespace) -> int:
 				)
 		print(
 			f'Detection summary (multiplier={multiplier:g}): processed={len(summary_df)}, '
-			f'detected={len(detections)}, failed={len(failures)}'
+			f'detected={len(detections)}, failed={len(failures)}, skipped={len(skipped_sources)}'
 		)
 		detections_by_multiplier[float(multiplier)] = detections
 
 	if not all_summaries:
+		if total_skipped_sources > 0 and not had_source_failures:
+			print('All candidate sources were skipped because their latest JSON bins are within one cadence window.')
+			return 0
 		print('No sources were processed successfully in incremental mode.')
 		return 1
 
@@ -1306,6 +1402,9 @@ def run_incremental_mode(args: argparse.Namespace) -> int:
 
 	maybe_send_weekly_detection_email_multi(args, detections_by_multiplier, summary_paths_by_multiplier)
 	sync_source_json_files_to_website()
+	removed_count, removed_bytes = cleanup_incremental_scan_csvs()
+	if removed_count > 0:
+		print(f'Cleaned up {removed_count} incremental scan CSV file(s), freeing {removed_bytes} bytes.')
 
 	if had_source_failures:
 		return 1
@@ -1317,7 +1416,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument('--source', help='Analyze a single source name instead of the whole NameCSV list.')
 	parser.add_argument(
 		'--db-path',
-		default=str(PYTHON_FILES / 'new_db_Aug2025.csv'),
+		default=str(PYTHON_FILES / 'new_db_Aug2025_weekly.csv'),
 		help='Path to the source-of-truth light curve database.',
 	)
 	parser.add_argument(
