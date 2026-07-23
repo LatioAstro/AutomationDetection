@@ -34,7 +34,6 @@ ptyprocess==0.7.0
 pure_eval==0.2.3
 pyerfa==2.0.1.5
 Pygments==2.20.0
--e git+https://github.com/LatioAstro/AutomationDetection.git@9ecce591c00ca4d3cecce7d6cf2b7d55456e884f#egg=pyLCR&subdirectory=AutomationDetection/pyLCR
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0
 PyYAML==6.0.3
