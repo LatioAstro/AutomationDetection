@@ -18,8 +18,10 @@ jobs:
 
       - name: Install packages
         run: |
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/LatioAstro/AutomationDetection".insteadOf "https://github.com/LatioAstro/AutomationDetection"
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          git config --global --unset url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/LatioAstro/AutomationDetection".insteadOf || true
 
       - name: Run script
         run: python AutomatedScript.py
