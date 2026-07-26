@@ -1186,19 +1186,8 @@ def build_multi_threshold_email_content(
 	for multiplier in sorted(detections_by_multiplier.keys()):
 		detections = detections_by_multiplier[multiplier].sort_values('Name').copy()
 		total_detections += len(detections)
-		potential_detections = detections.loc[
-			detections['latest_potential_flare_point']
-			| detections['latest_flare_active']
-			| detections['latest_confirmed_flare_active']
-		].sort_values('Name').copy()
-		if potential_detections.empty:
-			potential_detections = detections.sort_values('Name').copy()
-		confirmed_detections = detections.loc[
-			detections['latest_confirmed_flare_active']
-			| detections['latest_flare_active']
-		].sort_values('Name').copy()
-		if confirmed_detections.empty:
-			confirmed_detections = detections.sort_values('Name').copy()
+		potential_detections = detections.sort_values('Name').copy()
+		confirmed_detections = detections.sort_values('Name').copy()
 		print(
 			f'Email builder: multiplier={multiplier:g} detections={len(detections)} '
 			f'potential_table_rows={len(potential_detections)} confirmed_table_rows={len(confirmed_detections)}'
@@ -1207,9 +1196,9 @@ def build_multi_threshold_email_content(
 		text_lines.extend(
 			[
 				f'Threshold Multiplier = {multiplier:g}',
-				f'- Detected sources: {len(detections)}',
-				f'- Potential detections: {len(potential_detections)}',
-				f'- Confirmed detections: {len(confirmed_detections)}',
+				f'- Processed sources: {len(detections)}',
+				f'- Potential rows: {len(potential_detections)}',
+				f'- Confirmed rows: {len(confirmed_detections)}',
 			]
 		)
 		for _, row in detections.iterrows():
@@ -1350,7 +1339,7 @@ def maybe_send_weekly_detection_email_multi(
 		include_confirmed_plots=bool(args.email_include_confirmed_plots),
 	)
 	multiplier_label = ', '.join(f'{x:g}' for x in sorted(detections_by_multiplier.keys()))
-	subject = f"{args.email_subject_prefix} [{week_key}] {total_detections} source entries detected (x{multiplier_label})"
+	subject = f"{args.email_subject_prefix} [{week_key}] {total_detections} source summaries (x{multiplier_label})"
 	print(f'Email send path: subject={subject}')
 	print(f'Email send path: text_body_len={len(text_body)} html_body_len={len(html_body)} inline_images={len(inline_images)}')
 
@@ -1449,14 +1438,7 @@ def run_incremental_mode(args: argparse.Namespace) -> int:
 		summary_paths_by_multiplier[float(multiplier)] = summary_path
 		print(f'Wrote weekly incremental summary to {summary_path.relative_to(ROOT)}')
 
-		detections = summary_df.loc[
-			(summary_df['potential_points'] > 0)
-			| (summary_df['active_flare_weeks'] > 0)
-			| (summary_df['confirmed_flare_weeks'] > 0)
-			| summary_df['latest_potential_flare_point']
-			| summary_df['latest_flare_active']
-			| summary_df['latest_confirmed_flare_active']
-		].copy()
+		detections = summary_df.copy()
 		if 'omit_from_attention' in detections.columns:
 			omitted = detections.loc[detections['omit_from_attention']].copy()
 			detections = detections.loc[~detections['omit_from_attention']].copy()
