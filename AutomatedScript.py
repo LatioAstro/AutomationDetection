@@ -1316,15 +1316,7 @@ def maybe_send_weekly_detection_email_multi(
 				f'Email requested and --smtp-user was provided, but env var {args.smtp_password_env} is empty.'
 			)
 
-	state_path = Path(args.email_state_path)
-	state = load_json_state(state_path)
 	week_key = iso_week_key()
-	already_sent = state.get('last_sent_week') == week_key
-
-	if already_sent and not args.email_force_send:
-		print(f'Email already sent for {week_key}; skipping this run.')
-		return
-
 	text_body, html_body, inline_images, total_detections = build_multi_threshold_email_content(
 		detections_by_multiplier,
 		week_key,
@@ -1336,6 +1328,8 @@ def maybe_send_weekly_detection_email_multi(
 
 	send_email_notification(smtp_host=args.smtp_host, smtp_port=int(args.smtp_port), use_tls=not args.smtp_no_tls, username=username, password=password, sender=args.email_from, recipients=recipients, subject=subject, body=text_body, html_body=html_body, inline_images=inline_images)
 
+	state_path = Path(args.email_state_path)
+	state = load_json_state(state_path)
 	state['last_sent_week'] = week_key
 	state['last_subject'] = subject
 	state['last_detection_count'] = int(total_detections)
