@@ -412,6 +412,93 @@ def _pick_first_numeric(*values: object) -> float | np.floating | None:
 	return np.nan
 
 
+def _load_saved_email_summary(row: object) -> dict | None:
+	source_json_value = None
+	if isinstance(row, dict):
+		source_json_value = row.get('source_json') or row.get('source_json_path')
+	elif hasattr(row, 'get'):
+		source_json_value = row.get('source_json') or row.get('source_json_path')
+	if not source_json_value:
+		return None
+	json_path = Path(str(source_json_value))
+	if not json_path.exists():
+		return None
+	try:
+		with json_path.open('r', encoding='utf-8') as handle:
+			payload = json.load(handle)
+	except (OSError, json.JSONDecodeError):
+		return None
+	if not isinstance(payload, dict):
+		return None
+	scan_state = payload.get('_scanState')
+	if not isinstance(scan_state, dict):
+		return None
+	summary = scan_state.get('emailSummary')
+	if not isinstance(summary, dict):
+		return None
+	return summary
+
+
+def _resolve_row_with_saved_email_summary(row: object) -> dict:
+	resolved = dict(row)
+	saved_summary = _load_saved_email_summary(row)
+	if not saved_summary:
+		return resolved
+
+	resolved['potential_points'] = _coerce_count(resolved.get('potential_points', 0)) or _coerce_count(saved_summary.get('potentialPoints', 0))
+	resolved['active_flare_weeks'] = _coerce_count(resolved.get('active_flare_weeks', 0)) or _coerce_count(saved_summary.get('activeFlareWeeks', 0))
+	resolved['confirmed_flare_weeks'] = _coerce_count(resolved.get('confirmed_flare_weeks', 0)) or _coerce_count(saved_summary.get('confirmedFlareWeeks', 0))
+	resolved['had_potential_flare_points'] = bool(
+		resolved.get('had_potential_flare_points', False)
+		or _coerce_count(resolved.get('potential_points', 0)) > 0
+		or _coerce_count(saved_summary.get('potentialPoints', 0)) > 0
+		or bool(saved_summary.get('latestPotentialFlarePoint', False))
+	)
+	resolved['had_active_flare_weeks'] = bool(
+		resolved.get('had_active_flare_weeks', False)
+		or _coerce_count(resolved.get('active_flare_weeks', 0)) > 0
+		or _coerce_count(saved_summary.get('activeFlareWeeks', 0)) > 0
+		or bool(saved_summary.get('latestFlareActive', False))
+	)
+	resolved['had_confirmed_flare_weeks'] = bool(
+		resolved.get('had_confirmed_flare_weeks', False)
+		or _coerce_count(resolved.get('confirmed_flare_weeks', 0)) > 0
+		or _coerce_count(saved_summary.get('confirmedFlareWeeks', 0)) > 0
+		or bool(saved_summary.get('latestConfirmedFlareActive', False))
+	)
+	resolved['latest_potential_flare_point'] = bool(
+		resolved.get('latest_potential_flare_point', False)
+		or _coerce_count(resolved.get('potential_points', 0)) > 0
+		or bool(saved_summary.get('latestPotentialFlarePoint', False))
+		or _coerce_count(saved_summary.get('potentialPoints', 0)) > 0
+	)
+	resolved['latest_flare_active'] = bool(
+		resolved.get('latest_flare_active', False)
+		or _coerce_count(resolved.get('active_flare_weeks', 0)) > 0
+		or bool(saved_summary.get('latestFlareActive', False))
+		or _coerce_count(saved_summary.get('activeFlareWeeks', 0)) > 0
+	)
+	resolved['latest_confirmed_flare_active'] = bool(
+		resolved.get('latest_confirmed_flare_active', False)
+		or _coerce_count(resolved.get('confirmed_flare_weeks', 0)) > 0
+		or bool(saved_summary.get('latestConfirmedFlareActive', False))
+		or _coerce_count(saved_summary.get('confirmedFlareWeeks', 0)) > 0
+	)
+	resolved['latest_mdp99_percent'] = _pick_first_numeric(
+		resolved.get('latest_mdp99_percent', np.nan),
+		saved_summary.get('latestMdp99Percent', np.nan),
+	)
+	resolved['latest_potential_mdp99_percent'] = _pick_first_numeric(
+		resolved.get('latest_potential_mdp99_percent', np.nan),
+		saved_summary.get('latestPotentialMdp99Percent', np.nan),
+	)
+	resolved['latest_active_mdp99_percent'] = _pick_first_numeric(
+		resolved.get('latest_active_mdp99_percent', np.nan),
+		saved_summary.get('latestActiveMdp99Percent', np.nan),
+	)
+	return resolved
+
+
 def _latest_flaring_downward_steps(result: pd.DataFrame) -> int:
 	"""
 	Count trailing consecutive downward flux steps in the latest contiguous flaring segment.
@@ -475,11 +562,12 @@ def _build_detection_rows_html(
 ) -> str:
 	rows_html: list[str] = []
 	for _, row in rows.iterrows():
-		name = str(row['Name'])
-		is_active = bool(row[active_column])
+		resolved_row = _resolve_row_with_saved_email_summary(row)
+		name = str(resolved_row['Name'])
+		is_active = bool(resolved_row[active_column])
 		plot_html = '<span style="color:#6b7280;">No plot</span>'
 		if include_plot:
-			plot_value = str(row.get(plot_column, '') or '')
+			plot_value = str(resolved_row.get(plot_column, '') or '')
 			if plot_value:
 				plot_path = ROOT / plot_value
 				if plot_path.exists():
@@ -492,28 +580,28 @@ def _build_detection_rows_html(
 					)
 
 		latest_mdp = _pick_first_numeric(
-			row.get(mdp_column or 'latest_mdp99_percent', np.nan),
-			row.get('latest_mdp99_percent', np.nan),
-			row.get('latest_potential_mdp99_percent', np.nan),
-			row.get('latest_active_mdp99_percent', np.nan),
-			row.get('best_potential_mdp99_percent', np.nan),
-			row.get('best_active_mdp99_percent', np.nan),
+			resolved_row.get(mdp_column or 'latest_mdp99_percent', np.nan),
+			resolved_row.get('latest_mdp99_percent', np.nan),
+			resolved_row.get('latest_potential_mdp99_percent', np.nan),
+			resolved_row.get('latest_active_mdp99_percent', np.nan),
+			resolved_row.get('best_potential_mdp99_percent', np.nan),
+			resolved_row.get('best_active_mdp99_percent', np.nan),
 		)
-		peak_value = row.get('peak_potential_flux')
-		peak_flux = peak_value if np.isfinite(peak_value) else row.get('latest_new_point_flux_cosi', np.nan)
-		average_value = row.get('mean_potential_flux')
-		average_flux = average_value if np.isfinite(average_value) else row.get('source_average_flux', np.nan)
-		threshold = row.get('latest_threshold_cosi_flux', row.get('latest_flare_flux_threshold', np.nan))
+		peak_value = resolved_row.get('peak_potential_flux')
+		peak_flux = peak_value if np.isfinite(peak_value) else resolved_row.get('latest_new_point_flux_cosi', np.nan)
+		average_value = resolved_row.get('mean_potential_flux')
+		average_flux = average_value if np.isfinite(average_value) else resolved_row.get('source_average_flux', np.nan)
+		threshold = resolved_row.get('latest_threshold_cosi_flux', resolved_row.get('latest_flare_flux_threshold', np.nan))
 
 		potential_value = bool(
-			row.get('had_potential_flare_points', False)
-			or row.get('latest_potential_flare_point', False)
-			or _coerce_count(row.get('potential_points', 0)) > 0
+			resolved_row.get('had_potential_flare_points', False)
+			or resolved_row.get('latest_potential_flare_point', False)
+			or _coerce_count(resolved_row.get('potential_points', 0)) > 0
 		)
 		active_value = bool(
-			row.get('had_active_flare_weeks', False)
-			or row.get(active_column, False)
-			or _coerce_count(row.get('active_flare_weeks', 0)) > 0
+			resolved_row.get('had_active_flare_weeks', False)
+			or resolved_row.get(active_column, False)
+			or _coerce_count(resolved_row.get('active_flare_weeks', 0)) > 0
 		)
 		row_style = 'background:#ecfdf3;' if active_value else ''
 		rows_html.append(
@@ -871,6 +959,7 @@ def write_source_json_output(
 	active_rows: pd.DataFrame,
 	flare_intervals: list[tuple[float, float]],
 	flare_mdp_labels: list[tuple[float, float, float]],
+	summary_row: dict | None = None,
 ) -> None:
 	json_path.parent.mkdir(parents=True, exist_ok=True)
 	existing_payload = load_json_state(json_path)
@@ -941,6 +1030,18 @@ def write_source_json_output(
 			'confirmedStartMjd': float(latest_row['confirmed_flare_start_mjd']) if np.isfinite(latest_row['confirmed_flare_start_mjd']) else np.nan,
 		},
 	}
+	if summary_row is not None:
+		payload['_scanState']['emailSummary'] = {
+			'potentialPoints': int(summary_row.get('potential_points', 0) or 0),
+			'activeFlareWeeks': int(summary_row.get('active_flare_weeks', 0) or 0),
+			'confirmedFlareWeeks': int(summary_row.get('confirmed_flare_weeks', 0) or 0),
+			'latestPotentialFlarePoint': bool(summary_row.get('latest_potential_flare_point', False)),
+			'latestFlareActive': bool(summary_row.get('latest_flare_active', False)),
+			'latestConfirmedFlareActive': bool(summary_row.get('latest_confirmed_flare_active', False)),
+			'latestMdp99Percent': float(summary_row.get('latest_mdp99_percent', np.nan)) if np.isfinite(summary_row.get('latest_mdp99_percent', np.nan)) else np.nan,
+			'latestPotentialMdp99Percent': float(summary_row.get('latest_potential_mdp99_percent', np.nan)) if np.isfinite(summary_row.get('latest_potential_mdp99_percent', np.nan)) else np.nan,
+			'latestActiveMdp99Percent': float(summary_row.get('latest_active_mdp99_percent', np.nan)) if np.isfinite(summary_row.get('latest_active_mdp99_percent', np.nan)) else np.nan,
+		}
 
 	if factor_row is not None and 'Int_flux_ratio' in factor_row.index:
 		try:
@@ -1188,6 +1289,7 @@ def build_incremental_summary_for_source(
 		 active_rows=active_rows,
 		 flare_intervals=flare_intervals,
 		 flare_mdp_labels=flare_mdp_labels,
+		 summary_row=summary_row,
 	)
 	print(f'Wrote source JSON to {source_json_path.relative_to(ROOT)}')
 	print(f'Wrote incremental scan to {output_path.relative_to(ROOT)}')
@@ -1269,28 +1371,29 @@ def build_multi_threshold_email_content(
 			]
 		)
 		for _, row in detections.iterrows():
-			name = str(row['Name'])
-			latest_mdp = row.get('latest_mdp99_percent', np.nan)
-			confirmed_sigma = row.get('latest_confirmed_sigma_delta', np.nan)
-			peak_value = row.get('peak_potential_flux')
-			peak_flux = peak_value if np.isfinite(peak_value) else row.get('latest_new_point_flux_cosi', np.nan)
-			average_value = row.get('mean_potential_flux')
-			average_flux = average_value if np.isfinite(average_value) else row.get('source_average_flux', np.nan)
-			threshold = row.get('latest_threshold_cosi_flux', row.get('latest_flare_flux_threshold', np.nan))
+			resolved_row = _resolve_row_with_saved_email_summary(row)
+			name = str(resolved_row['Name'])
+			latest_mdp = resolved_row.get('latest_mdp99_percent', np.nan)
+			confirmed_sigma = resolved_row.get('latest_confirmed_sigma_delta', np.nan)
+			peak_value = resolved_row.get('peak_potential_flux')
+			peak_flux = peak_value if np.isfinite(peak_value) else resolved_row.get('latest_new_point_flux_cosi', np.nan)
+			average_value = resolved_row.get('mean_potential_flux')
+			average_flux = average_value if np.isfinite(average_value) else resolved_row.get('source_average_flux', np.nan)
+			threshold = resolved_row.get('latest_threshold_cosi_flux', resolved_row.get('latest_flare_flux_threshold', np.nan))
 			potential_value = bool(
-				row.get('had_potential_flare_points', False)
-				or row.get('latest_potential_flare_point', False)
-				or _coerce_count(row.get('potential_points', 0)) > 0
+				resolved_row.get('had_potential_flare_points', False)
+				or resolved_row.get('latest_potential_flare_point', False)
+				or _coerce_count(resolved_row.get('potential_points', 0)) > 0
 			)
 			active_value = bool(
-				row.get('had_active_flare_weeks', False)
-				or row.get('latest_flare_active', False)
-				or _coerce_count(row.get('active_flare_weeks', 0)) > 0
+				resolved_row.get('had_active_flare_weeks', False)
+				or resolved_row.get('latest_flare_active', False)
+				or _coerce_count(resolved_row.get('active_flare_weeks', 0)) > 0
 			)
 			confirmed_value = bool(
-				row.get('had_confirmed_flare_weeks', False)
-				or row.get('latest_confirmed_flare_active', False)
-				or _coerce_count(row.get('confirmed_flare_weeks', 0)) > 0
+				resolved_row.get('had_confirmed_flare_weeks', False)
+				or resolved_row.get('latest_confirmed_flare_active', False)
+				or _coerce_count(resolved_row.get('confirmed_flare_weeks', 0)) > 0
 			)
 			text_lines.append(
 				f"  - {name}: potential={potential_value}, "
