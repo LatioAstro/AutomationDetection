@@ -1294,19 +1294,6 @@ def build_incremental_summary_for_source(
 				f"(latest active MDP99={latest_active_mdp99:.2f}%)"
 			)
 
-	write_source_json_output(
-		 source_name=source_name,
-		 result=result,
-		 factor_row=factor_row,
-		 json_path=source_json_path,
-		 active_rows=active_rows,
-		 flare_intervals=flare_intervals,
-		 flare_mdp_labels=flare_mdp_labels,
-		 summary_row=summary_row,
-	)
-	print(f'Wrote source JSON to {source_json_path.relative_to(ROOT)}')
-	print(f'Wrote incremental scan to {output_path.relative_to(ROOT)}')
-
 	summary_row = {
 		'Name': source_name,
 		'weeks': int(len(result)),
@@ -1348,6 +1335,20 @@ def build_incremental_summary_for_source(
 		'potential_flare_plot': potential_plot_path,
 		'confirmed_flare_plot': confirmed_plot_path,
 	}
+
+	write_source_json_output(
+		 source_name=source_name,
+		 result=result,
+		 factor_row=factor_row,
+		 json_path=source_json_path,
+		 active_rows=active_rows,
+		 flare_intervals=flare_intervals,
+		 flare_mdp_labels=flare_mdp_labels,
+		 summary_row=summary_row,
+	)
+	print(f'Wrote source JSON to {source_json_path.relative_to(ROOT)}')
+	print(f'Wrote incremental scan to {output_path.relative_to(ROOT)}')
+
 	return summary_row, result
 
 

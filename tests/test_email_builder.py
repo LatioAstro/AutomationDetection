@@ -1,10 +1,13 @@
 import json
+from argparse import Namespace
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
-from AutomatedScript import build_multi_threshold_email_content, plot_light_curve
+import AutomatedScript
+from AutomatedScript import build_incremental_summary_for_source, build_multi_threshold_email_content, plot_light_curve
 
 
 def test_build_multi_threshold_email_content_uses_section_specific_mdp_values() -> None:
@@ -135,6 +138,59 @@ def test_plot_light_curve_supports_incremental_scan_columns(tmp_path: Path) -> N
     plot_light_curve(dataframe, 'Test Source', output_path, title_suffix='incremental test')
 
     assert output_path.exists()
+
+
+def test_build_incremental_summary_for_source_builds_summary_before_writing_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    result = pd.DataFrame(
+        [
+            {
+                'flare_active': False,
+                'potential_flare_point': False,
+                'confirmed_flare_active': False,
+                'quiescent_background_origin': 'cache',
+                'quiescent_background_cache_path': str(tmp_path / 'qb.csv'),
+                'new_point_mjd': 60000.0,
+                'new_point_flux': 1.0e-7,
+                'flare_flux_threshold': 1.0e-7,
+                'average_flux_full_series': 8e-8,
+                'mdp99_percent': 12.34,
+                'mdp99_available': True,
+                'confirmed_sigma_delta': 1.5,
+                'flare_start_mjd': 60000.0,
+                'confirmed_flare_start_mjd': 60000.0,
+            }
+        ]
+    )
+
+    monkeypatch.setattr(AutomatedScript.notebook_pipeline, 'incremental_flare_scan', lambda **kwargs: result.copy())
+    monkeypatch.setattr(AutomatedScript, 'add_incremental_mdp99_columns', lambda frame, factor_row, **kwargs: frame)
+    monkeypatch.setattr(AutomatedScript, 'plot_light_curve', lambda *args, **kwargs: None)
+    monkeypatch.setattr(AutomatedScript, 'write_source_json_output', lambda **kwargs: None)
+
+    args = Namespace(
+        flare_threshold_multiplier=1.0,
+        db_path='db.csv',
+        incremental_percent=10.0,
+        lightcurve_cadence='weekly',
+        lookback_weeks=4.0,
+        detection_method='sigma',
+        confirmed_sigma_threshold=3.0,
+        consecutive_points=1,
+        qb_cache_path=str(tmp_path / 'qb_cache.csv'),
+        cosi_background_rate=0.0,
+        arm_reduction=1.0,
+        mdp99_average_mu=1.0,
+    )
+
+    summary_row, returned_result = build_incremental_summary_for_source(
+        args,
+        'Test Source',
+        pd.DataFrame([{'Name': 'Test Source', 'Int_flux_ratio': 1.0}]),
+    )
+
+    assert summary_row['Name'] == 'Test Source'
+    assert returned_result.equals(result)
+    assert summary_row['latest_new_point_flux'] == pytest.approx(1.0e-7)
 
 
 def test_build_multi_threshold_email_content_uses_saved_source_json_summary(tmp_path: Path) -> None:
