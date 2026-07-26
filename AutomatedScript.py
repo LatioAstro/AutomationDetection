@@ -947,12 +947,15 @@ def send_email_notification(
 				filename=attachment_path.name,
 			)
 
-	with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
-		if use_tls:
-			server.starttls()
-		if username:
-			server.login(username, password)
-		server.send_message(message)
+	try:
+		with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+			if use_tls:
+				server.starttls()
+			if username:
+				server.login(username, password)
+			server.send_message(message)
+	except Exception as exc:
+		raise RuntimeError(f'Failed to send email via {smtp_host}:{smtp_port} to {", ".join(recipients)}: {exc}') from exc
 
 
 def build_incremental_summary_for_source(
@@ -1295,7 +1298,7 @@ def maybe_send_weekly_detection_email_multi(
 	if not args.email_on_detections:
 		return
 	total_detections = int(sum(len(df) for df in detections_by_multiplier.values()))
-	if total_detections == 0:
+	if total_detections == 0 and not args.email_force_send:
 		print('No detections this run; no email sent.')
 		return
 
@@ -1309,12 +1312,13 @@ def maybe_send_weekly_detection_email_multi(
 	recipients = parse_email_recipients(args.email_to)
 	username = args.smtp_user or ''
 	password = ''
-	if username:
-		password = os.environ.get(args.smtp_password_env, '')
-		if not password:
-			raise ValueError(
-				f'Email requested and --smtp-user was provided, but env var {args.smtp_password_env} is empty.'
-			)
+	if not username:
+		raise ValueError('Email requested, but SMTP username is missing.')
+	password = os.environ.get(args.smtp_password_env, '')
+	if not password:
+		raise ValueError(
+			f'Email requested and --smtp-user was provided, but env var {args.smtp_password_env} is empty.'
+		)
 
 	week_key = iso_week_key()
 	text_body, html_body, inline_images, total_detections = build_multi_threshold_email_content(
