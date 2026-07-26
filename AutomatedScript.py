@@ -1128,6 +1128,7 @@ def build_incremental_summary_for_source(
 		'weeks': int(len(result)),
 		'potential_points': int(len(potential_rows)),
 		'active_flare_weeks': int(len(active_rows)),
+		'had_any_detection': bool(len(potential_rows) > 0 or len(active_rows) > 0 or len(confirmed_rows) > 0),
 		'latest_new_point_mjd': float(latest_row['new_point_mjd']),
 		'latest_new_point_flux': float(latest_row['new_point_flux']),
 		'latest_flare_flux_threshold': float(latest_row['flare_flux_threshold']),
@@ -1430,7 +1431,10 @@ def run_incremental_mode(args: argparse.Namespace) -> int:
 		print(f'Wrote weekly incremental summary to {summary_path.relative_to(ROOT)}')
 
 		detections = summary_df.loc[
-			summary_df['latest_potential_flare_point']
+			(summary_df['potential_points'] > 0)
+			| (summary_df['active_flare_weeks'] > 0)
+			| (summary_df['confirmed_flare_weeks'] > 0)
+			| summary_df['latest_potential_flare_point']
 			| summary_df['latest_flare_active']
 			| summary_df['latest_confirmed_flare_active']
 		].copy()
@@ -1495,7 +1499,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument(
 		'--lookback-weeks',
 		type=float,
-		default=float(os.environ.get('LOOKBACK_WEEKS', '20.0')),
+		default=float(os.environ.get('LOOKBACK_WEEKS', '10.0')),
 		help='Only analyze bins within this many weeks from the latest cadence point.',
 	)
 	parser.add_argument(
