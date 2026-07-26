@@ -1006,6 +1006,58 @@ def build_incremental_summary_for_source(
 	flare_intervals = build_active_intervals(active_rows, start_column='flare_start_mjd')
 	flare_mdp_labels = build_interval_mdp_labels(active_rows, start_column='flare_start_mjd')
 	confirmed_intervals = build_active_intervals(confirmed_rows, start_column='confirmed_flare_start_mjd')
+
+	plot_base = INCREMENTAL_OUTPUT_DIR / f'{safe_name}'
+	plot_base.mkdir(parents=True, exist_ok=True)
+	flare_plot_path = ''
+	potential_plot_path = ''
+	confirmed_plot_path = ''
+	if not result.empty:
+		if latest_potential or latest_active:
+			flare_plot_path = str(plot_base.with_suffix('').with_name(f'{safe_name}_flare_plot.png').relative_to(ROOT))
+			plot_light_curve(
+				result,
+				source_name,
+				ROOT / flare_plot_path,
+				title_suffix='incremental flare detection',
+				y_label=r'Photon Flux (ph cm$^{-2}$ s$^{-1}$)',
+				flare_points=result.loc[result['potential_flare_point']].copy(),
+				flare_intervals=flare_intervals,
+				flare_mdp_labels=flare_mdp_labels,
+				quiescent_background=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
+				flare_threshold=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
+			)
+		if latest_potential:
+			potential_plot_path = str(plot_base.with_suffix('').with_name(f'{safe_name}_potential_plot.png').relative_to(ROOT))
+			plot_light_curve(
+				result,
+				source_name,
+				ROOT / potential_plot_path,
+				title_suffix='potential flare points',
+				y_label=r'Photon Flux (ph cm$^{-2}$ s$^{-1}$)',
+				flare_points=result.loc[result['potential_flare_point']].copy(),
+				flare_intervals=flare_intervals,
+				flare_mdp_labels=flare_mdp_labels,
+				quiescent_background=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
+				flare_threshold=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
+			)
+		if latest_confirmed_active:
+			confirmed_plot_path = str(plot_base.with_suffix('').with_name(f'{safe_name}_confirmed_plot.png').relative_to(ROOT))
+			plot_light_curve(
+				result,
+				source_name,
+				ROOT / confirmed_plot_path,
+				title_suffix='confirmed flare activity',
+				y_label=r'Photon Flux (ph cm$^{-2}$ s$^{-1}$)',
+				flare_points=result.loc[result['confirmed_flare_active']].copy(),
+				flare_intervals=confirmed_intervals,
+				flare_mdp_labels=flare_mdp_labels,
+				quiescent_background=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
+				flare_threshold=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
+			)
+	flare_intervals = build_active_intervals(active_rows, start_column='flare_start_mjd')
+	flare_mdp_labels = build_interval_mdp_labels(active_rows, start_column='flare_start_mjd')
+	confirmed_intervals = build_active_intervals(confirmed_rows, start_column='confirmed_flare_start_mjd')
 	print(
 		f"{source_name}: weeks={len(result)}, potential_points={len(potential_rows)}, "
 		f"active_flare_weeks={len(active_rows)}, latest_flux={latest_row['new_point_flux']:.3e}, "
@@ -1101,9 +1153,9 @@ def build_incremental_summary_for_source(
 		'quiescent_background_origin': qb_origin,
 		'scan_csv': str(output_path.relative_to(ROOT)),
 		'source_json': str(source_json_path.relative_to(ROOT)),
-		'flare_plot': '',
-		'potential_flare_plot': '',
-		'confirmed_flare_plot': '',
+		'flare_plot': flare_plot_path,
+		'potential_flare_plot': potential_plot_path,
+		'confirmed_flare_plot': confirmed_plot_path,
 	}
 	return summary_row, result
 
