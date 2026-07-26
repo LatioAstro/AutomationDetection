@@ -1495,7 +1495,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument(
 		'--lookback-weeks',
 		type=float,
-		default=float(os.environ.get('LOOKBACK_WEEKS', '30.0')),
+		default=float(os.environ.get('LOOKBACK_WEEKS', '20.0')),
 		help='Only analyze bins within this many weeks from the latest cadence point.',
 	)
 	parser.add_argument(

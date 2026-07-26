@@ -67,7 +67,7 @@ jobs:
               "CONSECUTIVE_POINTS=3",
               "INCREMENTAL_PERCENT=0.3",
               "LIGHTCURVE_CADENCE=weekly",
-              "LOOKBACK_WEEKS=10.0",
+              "LOOKBACK_WEEKS=20.0",
               "DETECTION_METHOD=sigma",
               "CONFIRMED_SIGMA_THRESHOLD=3.0",
               "",
