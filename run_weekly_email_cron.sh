@@ -6,9 +6,18 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${1:-}"
 
 if [[ -n "$ENV_FILE" && -f "$ENV_FILE" ]]; then
-    set -a
-    source "$ENV_FILE"
-    set +a
+    if [[ -f "$ROOT_DIR/PythonFiles/env_loader.py" ]]; then
+        while IFS= read -r line; do
+            if [[ -n "$line" ]]; then
+                eval "$line"
+            fi
+        done < <(python3 "$ROOT_DIR/PythonFiles/env_loader.py" "$ENV_FILE")
+    else
+        set -a
+        # shellcheck disable=SC1090
+        source "$ENV_FILE"
+        set +a
+    fi
     shift
 fi
 
@@ -28,7 +37,7 @@ fi
 ###############################################################################
 
 SOURCE_NAME="${SOURCE_NAME:-}"
-FLARE_MULTIPLIER="${FLARE_MULTIPLIER:-2.0}"
+FLARE_MULTIPLIER="${FLARE_MULTIPLIER:-${FLARE_THRESHOLD_MULTIPLIER:-2.0}}"
 CONSECUTIVE_POINTS="${CONSECUTIVE_POINTS:-3}"
 
 EMAIL_FORCE_SEND="${EMAIL_FORCE_SEND:-0}"

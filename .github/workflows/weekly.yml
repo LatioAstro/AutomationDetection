@@ -44,32 +44,42 @@ jobs:
       ###############################################################
 
       - name: Create weekly_email.env
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
         run: |
-          cat > weekly_email.env << EOF
-          SMTP_HOST=smtp.gmail.com
-          SMTP_PORT=587
-          SMTP_USER=${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
 
-          ALERT_EMAIL_FROM=${{ secrets.SMTP_USER }}
-          ALERT_EMAIL_TO=${{ secrets.ALERT_EMAIL_TO }}
+          contents = "\n".join([
+              "SMTP_HOST=smtp.gmail.com",
+              "SMTP_PORT=587",
+              f"SMTP_USER={os.environ['SMTP_USER']}",
+              f"SMTP_PASSWORD={os.environ['SMTP_PASSWORD']}",
+              "",
+              f"ALERT_EMAIL_FROM={os.environ['SMTP_USER']}",
+              f"ALERT_EMAIL_TO={os.environ['ALERT_EMAIL_TO']}",
+              "EMAIL_SUBJECT_PREFIX=AutomationDetection weekly flare alert",
+              "",
+              "FLARE_THRESHOLD_MULTIPLIER=1.0",
+              "CONSECUTIVE_POINTS=3",
+              "INCREMENTAL_PERCENT=0.3",
+              "LIGHTCURVE_CADENCE=weekly",
+              "LOOKBACK_WEEKS=10.0",
+              "DETECTION_METHOD=sigma",
+              "CONFIRMED_SIGMA_THRESHOLD=3.0",
+              "",
+              "COSI_BACKGROUND_RATE=0.25",
+              "MDP99_AVERAGE_MU=0.3",
+              "",
+              "SOURCE_NAME=",
+              "EMAIL_FORCE_SEND=1",
+          ])
 
-          EMAIL_SUBJECT_PREFIX=AutomationDetection weekly flare alert
-
-          FLARE_THRESHOLD_MULTIPLIER=1.0
-          CONSECUTIVE_POINTS=3
-          INCREMENTAL_PERCENT=0.3
-          LIGHTCURVE_CADENCE=weekly
-          LOOKBACK_WEEKS=10.0
-          DETECTION_METHOD=sigma
-          CONFIRMED_SIGMA_THRESHOLD=3.0
-
-          COSI_BACKGROUND_RATE=0.25
-          MDP99_AVERAGE_MU=0.3
-
-          SOURCE_NAME=
-          EMAIL_FORCE_SEND=1
-          EOF
+          Path("weekly_email.env").write_text(contents + "\n", encoding="utf-8")
+          PY
 
       ###############################################################
       # Run analysis
