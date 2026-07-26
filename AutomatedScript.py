@@ -1187,19 +1187,8 @@ def build_multi_threshold_email_content(
 	for multiplier in sorted(detections_by_multiplier.keys()):
 		detections = detections_by_multiplier[multiplier].sort_values('Name').copy()
 		total_detections += len(detections)
-		potential_detections = detections.loc[
-			(detections.get('potential_points', 0) > 0)
-			| (detections.get('active_flare_weeks', 0) > 0)
-			| (detections.get('confirmed_flare_weeks', 0) > 0)
-			| detections['latest_potential_flare_point']
-			| detections['latest_flare_active']
-			| detections['latest_confirmed_flare_active']
-		].sort_values('Name').copy()
-		confirmed_detections = detections.loc[
-			(detections.get('confirmed_flare_weeks', 0) > 0)
-			| detections['latest_confirmed_flare_active']
-			| detections['latest_flare_active']
-		].sort_values('Name').copy()
+		potential_detections = detections.sort_values('Name').copy()
+		confirmed_detections = detections.sort_values('Name').copy()
 		print(
 			f'Email builder: multiplier={multiplier:g} detections={len(detections)} '
 			f'potential_table_rows={len(potential_detections)} confirmed_table_rows={len(confirmed_detections)}'
@@ -1458,7 +1447,6 @@ def run_incremental_mode(args: argparse.Namespace) -> int:
 		detections = summary_df.copy()
 		if 'omit_from_attention' in detections.columns:
 			omitted = detections.loc[detections['omit_from_attention']].copy()
-			detections = detections.loc[~detections['omit_from_attention']].copy()
 			if not omitted.empty:
 				print(
 					f'Omitted from email attention (multiplier={multiplier:g}) due to >=2 latest consecutive downward flaring points above threshold: '
@@ -1466,7 +1454,7 @@ def run_incremental_mode(args: argparse.Namespace) -> int:
 				)
 		print(
 			f'Detection summary (multiplier={multiplier:g}): processed={len(summary_df)}, '
-			f'detected={len(detections)}, failed={len(failures)}, skipped={len(skipped_sources)}'
+			f'email_rows={len(detections)}, failed={len(failures)}, skipped={len(skipped_sources)}'
 		)
 		detections_by_multiplier[float(multiplier)] = detections
 

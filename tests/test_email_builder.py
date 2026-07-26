@@ -29,7 +29,30 @@ def test_build_multi_threshold_email_content_uses_section_specific_mdp_values() 
                     'confirmed_flare_plot': 'missing_plot.png',
                     'latest_new_point_flux_cosi': 1.2e-7,
                     'latest_flare_flux_threshold': 5e-8,
-                }
+                },
+                {
+                    'Name': 'Second Source',
+                    'potential_points': 2,
+                    'active_flare_weeks': 1,
+                    'confirmed_flare_weeks': 0,
+                    'had_potential_flare_points': True,
+                    'had_active_flare_weeks': True,
+                    'had_confirmed_flare_weeks': False,
+                    'latest_potential_flare_point': True,
+                    'latest_flare_active': True,
+                    'latest_confirmed_flare_active': False,
+                    'latest_mdp99_percent': 78.91,
+                    'latest_potential_mdp99_percent': 23.45,
+                    'latest_active_mdp99_percent': 56.78,
+                    'peak_potential_flux': 2.34e-7,
+                    'mean_potential_flux': 2.20e-7,
+                    'latest_threshold_cosi_flux': 9.0e-8,
+                    'latest_confirmed_sigma_delta': 2.2,
+                    'potential_flare_plot': 'missing_plot.png',
+                    'confirmed_flare_plot': 'missing_plot.png',
+                    'latest_new_point_flux_cosi': 2.3e-7,
+                    'latest_flare_flux_threshold': 6e-8,
+                },
             ]
         )
     }
@@ -41,8 +64,10 @@ def test_build_multi_threshold_email_content_uses_section_specific_mdp_values() 
         include_confirmed_plots=False,
     )
 
-    assert total_detections == 1
+    assert total_detections == 2
     assert 'Test Source' in text_body
+    assert 'Second Source' in text_body
     assert '12.34' in html_body
     assert '45.67' in html_body
+    assert html_body.count('<tr') >= 4
     assert inline_images == []
