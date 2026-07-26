@@ -421,6 +421,7 @@ def _build_detection_rows_html(
 	include_plot: bool,
 	plot_column: str,
 	active_column: str,
+	mdp_column: str | None,
 	inline_images: list[tuple[str, Path]],
 	plot_alt_label: str,
 ) -> str:
@@ -442,7 +443,7 @@ def _build_detection_rows_html(
 						f'border:1px solid #d1d5db;" />'
 					)
 
-		latest_mdp = row.get('latest_mdp99_percent', np.nan)
+		latest_mdp = row.get(mdp_column or 'latest_mdp99_percent', np.nan)
 		peak_value = row.get('peak_potential_flux')
 		peak_flux = peak_value if np.isfinite(peak_value) else row.get('latest_new_point_flux_cosi', np.nan)
 		average_value = row.get('mean_potential_flux')
@@ -1186,8 +1187,19 @@ def build_multi_threshold_email_content(
 	for multiplier in sorted(detections_by_multiplier.keys()):
 		detections = detections_by_multiplier[multiplier].sort_values('Name').copy()
 		total_detections += len(detections)
-		potential_detections = detections.sort_values('Name').copy()
-		confirmed_detections = detections.sort_values('Name').copy()
+		potential_detections = detections.loc[
+			(detections.get('potential_points', 0) > 0)
+			| (detections.get('active_flare_weeks', 0) > 0)
+			| (detections.get('confirmed_flare_weeks', 0) > 0)
+			| detections['latest_potential_flare_point']
+			| detections['latest_flare_active']
+			| detections['latest_confirmed_flare_active']
+		].sort_values('Name').copy()
+		confirmed_detections = detections.loc[
+			(detections.get('confirmed_flare_weeks', 0) > 0)
+			| detections['latest_confirmed_flare_active']
+			| detections['latest_flare_active']
+		].sort_values('Name').copy()
 		print(
 			f'Email builder: multiplier={multiplier:g} detections={len(detections)} '
 			f'potential_table_rows={len(potential_detections)} confirmed_table_rows={len(confirmed_detections)}'
@@ -1210,9 +1222,12 @@ def build_multi_threshold_email_content(
 			average_value = row.get('mean_potential_flux')
 			average_flux = average_value if np.isfinite(average_value) else row.get('source_average_flux', np.nan)
 			threshold = row.get('latest_threshold_cosi_flux', row.get('latest_flare_flux_threshold', np.nan))
+			potential_value = bool(row.get('had_potential_flare_points', row.get('latest_potential_flare_point', False)))
+			active_value = bool(row.get('had_active_flare_weeks', row.get('latest_flare_active', False)))
+			confirmed_value = bool(row.get('had_confirmed_flare_weeks', row.get('latest_confirmed_flare_active', False)))
 			text_lines.append(
-				f"  - {name}: potential={bool(row['latest_potential_flare_point'])}, "
-				f"active={bool(row['latest_flare_active'])}, confirmed={bool(row['latest_confirmed_flare_active'])}, "
+				f"  - {name}: potential={potential_value}, "
+				f"active={active_value}, confirmed={confirmed_value}, "
 				f"confirmed_sigma={format_optional_float(confirmed_sigma)}, "
 				f"latest_mdp99={format_optional_float(latest_mdp)}, "
 				f"peak_flux={format_scientific_optional(peak_flux)}, "
@@ -1226,6 +1241,7 @@ def build_multi_threshold_email_content(
 			include_plot=include_potential_plots,
 			plot_column='potential_flare_plot',
 			active_column='latest_flare_active',
+			mdp_column='latest_potential_mdp99_percent',
 			inline_images=inline_images,
 			plot_alt_label='potential flare',
 		)
@@ -1234,6 +1250,7 @@ def build_multi_threshold_email_content(
 			include_plot=include_confirmed_plots,
 			plot_column='confirmed_flare_plot',
 			active_column='latest_confirmed_flare_active',
+			mdp_column='latest_active_mdp99_percent',
 			inline_images=inline_images,
 			plot_alt_label='confirmed flare',
 		)
