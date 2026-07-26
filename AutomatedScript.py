@@ -1180,6 +1180,7 @@ def build_multi_threshold_email_content(
 	for multiplier in sorted(detections_by_multiplier.keys()):
 		detections = detections_by_multiplier[multiplier].sort_values('Name').copy()
 		total_detections += len(detections)
+		print(f'Email builder: multiplier={multiplier:g} detections={len(detections)} potential={int(detections["latest_potential_flare_point"].sum())} confirmed={int(detections["latest_confirmed_flare_active"].sum())}')
 		potential_detections = detections.loc[detections['latest_potential_flare_point']].sort_values('Name').copy()
 		confirmed_detections = detections.loc[detections['latest_confirmed_flare_active']].sort_values('Name').copy()
 
@@ -1321,6 +1322,7 @@ def maybe_send_weekly_detection_email_multi(
 		)
 
 	week_key = iso_week_key()
+	print(f'Email send path: week={week_key} total_detections={total_detections} force_send={args.email_force_send}')
 	text_body, html_body, inline_images, total_detections = build_multi_threshold_email_content(
 		detections_by_multiplier,
 		week_key,
@@ -1329,6 +1331,8 @@ def maybe_send_weekly_detection_email_multi(
 	)
 	multiplier_label = ', '.join(f'{x:g}' for x in sorted(detections_by_multiplier.keys()))
 	subject = f"{args.email_subject_prefix} [{week_key}] {total_detections} source entries detected (x{multiplier_label})"
+	print(f'Email send path: subject={subject}')
+	print(f'Email send path: text_body_len={len(text_body)} html_body_len={len(html_body)} inline_images={len(inline_images)}')
 
 	send_email_notification(smtp_host=args.smtp_host, smtp_port=int(args.smtp_port), use_tls=not args.smtp_no_tls, username=username, password=password, sender=args.email_from, recipients=recipients, subject=subject, body=text_body, html_body=html_body, inline_images=inline_images)
 
