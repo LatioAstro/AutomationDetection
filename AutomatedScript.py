@@ -1181,9 +1181,23 @@ def build_multi_threshold_email_content(
 	for multiplier in sorted(detections_by_multiplier.keys()):
 		detections = detections_by_multiplier[multiplier].sort_values('Name').copy()
 		total_detections += len(detections)
-		print(f'Email builder: multiplier={multiplier:g} detections={len(detections)} potential={int(detections["latest_potential_flare_point"].sum())} confirmed={int(detections["latest_confirmed_flare_active"].sum())}')
-		potential_detections = detections.loc[detections['latest_potential_flare_point']].sort_values('Name').copy()
-		confirmed_detections = detections.loc[detections['latest_confirmed_flare_active']].sort_values('Name').copy()
+		potential_detections = detections.loc[
+			detections['latest_potential_flare_point']
+			| detections['latest_flare_active']
+			| detections['latest_confirmed_flare_active']
+		].sort_values('Name').copy()
+		if potential_detections.empty:
+			potential_detections = detections.sort_values('Name').copy()
+		confirmed_detections = detections.loc[
+			detections['latest_confirmed_flare_active']
+			| detections['latest_flare_active']
+		].sort_values('Name').copy()
+		if confirmed_detections.empty:
+			confirmed_detections = detections.sort_values('Name').copy()
+		print(
+			f'Email builder: multiplier={multiplier:g} detections={len(detections)} '
+			f'potential_table_rows={len(potential_detections)} confirmed_table_rows={len(confirmed_detections)}'
+		)
 
 		text_lines.extend(
 			[
