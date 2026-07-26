@@ -122,11 +122,20 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add data/src_data
+          timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          mkdir -p data
+          cat > data/last_update.json <<EOF
+          {
+            "last_updated": "${timestamp}",
+            "source": "AutomationDetection"
+          }
+          EOF
+
+          git add data/src_data data/last_update.json
 
           if git diff --cached --quiet; then
             echo "No changes"
           else
-            git commit -m "Automatic source update"
+            git commit -m "Automatic source update" -m "Submitted at: ${timestamp}"
             git push
           fi
