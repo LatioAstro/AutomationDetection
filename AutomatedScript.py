@@ -1350,6 +1350,11 @@ def run_incremental_mode(args: argparse.Namespace) -> int:
 	For each source, we run the incremental flare analysis, which checks for new weekly points.
 	"""
 
+	INCREMENTAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+	removed_count, removed_bytes = cleanup_incremental_scan_csvs()
+	if removed_count > 0:
+		print(f'Cleared {removed_count} previous incremental scan CSV file(s), freeing {removed_bytes} bytes.')
+
 	if args.source:
 		target_sources = [args.source]
 	else:
@@ -1452,9 +1457,6 @@ def run_incremental_mode(args: argparse.Namespace) -> int:
 
 	maybe_send_weekly_detection_email_multi(args, detections_by_multiplier, summary_paths_by_multiplier)
 	#sync_source_json_files_to_website()
-	removed_count, removed_bytes = cleanup_incremental_scan_csvs()
-	if removed_count > 0:
-		print(f'Cleaned up {removed_count} incremental scan CSV file(s), freeing {removed_bytes} bytes.')
 
 	if had_source_failures:
 		return 1
