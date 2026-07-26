@@ -288,6 +288,73 @@ def test_build_multi_threshold_email_content_splits_potential_and_active_rows_by
     assert '56.78' in html_body
 
 
+def test_build_multi_threshold_email_content_filters_sources_with_mdp_over_50_percent() -> None:
+    detections_by_multiplier = {
+        3.0: pd.DataFrame(
+            [
+                {
+                    'Name': 'Filtered Source',
+                    'potential_points': 1,
+                    'active_flare_weeks': 0,
+                    'confirmed_flare_weeks': 0,
+                    'had_potential_flare_points': True,
+                    'had_active_flare_weeks': False,
+                    'had_confirmed_flare_weeks': False,
+                    'latest_potential_flare_point': True,
+                    'latest_flare_active': False,
+                    'latest_confirmed_flare_active': False,
+                    'latest_mdp99_percent': 60.0,
+                    'latest_potential_mdp99_percent': 60.0,
+                    'latest_active_mdp99_percent': np.nan,
+                    'peak_potential_flux': 1.23e-7,
+                    'mean_potential_flux': 1.10e-7,
+                    'latest_threshold_cosi_flux': 8.0e-8,
+                    'latest_confirmed_sigma_delta': np.nan,
+                    'potential_flare_plot': '',
+                    'confirmed_flare_plot': '',
+                    'latest_new_point_flux_cosi': 1.2e-7,
+                    'latest_flare_flux_threshold': 5e-8,
+                },
+                {
+                    'Name': 'Included Source',
+                    'potential_points': 1,
+                    'active_flare_weeks': 0,
+                    'confirmed_flare_weeks': 0,
+                    'had_potential_flare_points': True,
+                    'had_active_flare_weeks': False,
+                    'had_confirmed_flare_weeks': False,
+                    'latest_potential_flare_point': True,
+                    'latest_flare_active': False,
+                    'latest_confirmed_flare_active': False,
+                    'latest_mdp99_percent': 20.0,
+                    'latest_potential_mdp99_percent': 20.0,
+                    'latest_active_mdp99_percent': np.nan,
+                    'peak_potential_flux': 1.23e-7,
+                    'mean_potential_flux': 1.10e-7,
+                    'latest_threshold_cosi_flux': 8.0e-8,
+                    'latest_confirmed_sigma_delta': np.nan,
+                    'potential_flare_plot': '',
+                    'confirmed_flare_plot': '',
+                    'latest_new_point_flux_cosi': 1.2e-7,
+                    'latest_flare_flux_threshold': 5e-8,
+                },
+            ]
+        )
+    }
+
+    text_body, html_body, _, _ = build_multi_threshold_email_content(
+        detections_by_multiplier,
+        '2026-W30',
+        include_potential_plots=False,
+        include_confirmed_plots=False,
+    )
+
+    assert 'Filtered Source' not in html_body
+    assert 'Included Source' in html_body
+    assert 'Filtered Source' not in text_body
+    assert 'Included Source' in text_body
+
+
 def test_build_multi_threshold_email_content_uses_saved_source_json_summary(tmp_path: Path) -> None:
     saved_json_path = tmp_path / 'saved_summary.json'
     saved_json_path.write_text(

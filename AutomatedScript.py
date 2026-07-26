@@ -425,6 +425,21 @@ def _pick_first_numeric(*values: object) -> float | np.floating | None:
 	return np.nan
 
 
+def _should_filter_row_for_section_mdp(resolved_row: dict, mdp_column: str | None) -> bool:
+	if not mdp_column:
+		return False
+	value = resolved_row.get(mdp_column, np.nan)
+	if value is None:
+		return False
+	try:
+		numeric_value = float(value)
+	except (TypeError, ValueError):
+		return False
+	if not np.isfinite(numeric_value):
+		return False
+	return numeric_value > 50.0
+
+
 def _load_saved_email_summary(row: object) -> dict | None:
 	source_json_value = None
 	if isinstance(row, dict):
@@ -592,6 +607,8 @@ def _build_detection_rows_html(
 						f'border:1px solid #d1d5db;" />'
 					)
 
+		if _should_filter_row_for_section_mdp(resolved_row, mdp_column):
+			continue
 		latest_mdp = _pick_first_numeric(
 			resolved_row.get(mdp_column or 'latest_mdp99_percent', np.nan),
 			resolved_row.get('latest_mdp99_percent', np.nan),
@@ -1368,9 +1385,9 @@ def build_multi_threshold_email_content(
 
 	for multiplier in sorted(detections_by_multiplier.keys()):
 		detections = detections_by_multiplier[multiplier].sort_values('Name').copy()
-		total_detections += len(detections)
 		potential_detections = []
 		confirmed_detections = []
+		rendered_rows_for_text = []
 		for _, row in detections.sort_values('Name').iterrows():
 			resolved_row = _resolve_row_with_saved_email_summary(row)
 			potential_value = bool(
@@ -1388,10 +1405,14 @@ def build_multi_threshold_email_content(
 				or resolved_row.get('latest_confirmed_flare_active', False)
 				or _coerce_count(resolved_row.get('confirmed_flare_weeks', 0)) > 0
 			)
-			if potential_value:
+			include_in_potential = potential_value and not _should_filter_row_for_section_mdp(resolved_row, 'latest_potential_mdp99_percent')
+			include_in_confirmed = (active_value or confirmed_value) and not _should_filter_row_for_section_mdp(resolved_row, 'latest_active_mdp99_percent')
+			if include_in_potential:
 				potential_detections.append(resolved_row)
-			if active_value or confirmed_value:
+			if include_in_confirmed:
 				confirmed_detections.append(resolved_row)
+			if include_in_potential or include_in_confirmed:
+				rendered_rows_for_text.append(resolved_row)
 		potential_detections = pd.DataFrame(potential_detections)
 		confirmed_detections = pd.DataFrame(confirmed_detections)
 		print(
@@ -1407,20 +1428,8 @@ def build_multi_threshold_email_content(
 				f'- Confirmed rows: {len(confirmed_detections)}',
 			]
 		)
-		for _, row in detections.iterrows():
-			resolved_row = _resolve_row_with_saved_email_summary(row)
+		for resolved_row in rendered_rows_for_text:
 			name = str(resolved_row['Name'])
-			latest_mdp = _pick_first_numeric(
-			resolved_row.get('latest_mdp99_percent', np.nan),
-			resolved_row.get('latest_potential_mdp99_percent', np.nan),
-			resolved_row.get('latest_active_mdp99_percent', np.nan),
-		)
-			confirmed_sigma = resolved_row.get('latest_confirmed_sigma_delta', np.nan)
-			peak_value = resolved_row.get('peak_potential_flux')
-			peak_flux = peak_value if np.isfinite(peak_value) else resolved_row.get('latest_new_point_flux_cosi', np.nan)
-			average_value = resolved_row.get('mean_potential_flux')
-			average_flux = average_value if np.isfinite(average_value) else resolved_row.get('source_average_flux', np.nan)
-			threshold = resolved_row.get('latest_threshold_cosi_flux', resolved_row.get('latest_flare_flux_threshold', np.nan))
 			potential_value = bool(
 				resolved_row.get('had_potential_flare_points', False)
 				or resolved_row.get('latest_potential_flare_point', False)
@@ -1436,6 +1445,17 @@ def build_multi_threshold_email_content(
 				or resolved_row.get('latest_confirmed_flare_active', False)
 				or _coerce_count(resolved_row.get('confirmed_flare_weeks', 0)) > 0
 			)
+			latest_mdp = _pick_first_numeric(
+				resolved_row.get('latest_mdp99_percent', np.nan),
+				resolved_row.get('latest_potential_mdp99_percent', np.nan),
+				resolved_row.get('latest_active_mdp99_percent', np.nan),
+			)
+			confirmed_sigma = resolved_row.get('latest_confirmed_sigma_delta', np.nan)
+			peak_value = resolved_row.get('peak_potential_flux')
+			peak_flux = peak_value if np.isfinite(peak_value) else resolved_row.get('latest_new_point_flux_cosi', np.nan)
+			average_value = resolved_row.get('mean_potential_flux')
+			average_flux = average_value if np.isfinite(average_value) else resolved_row.get('source_average_flux', np.nan)
+			threshold = resolved_row.get('latest_threshold_cosi_flux', resolved_row.get('latest_flare_flux_threshold', np.nan))
 			text_lines.append(
 				f"  - {name}: potential={potential_value}, "
 				f"active={active_value}, confirmed={confirmed_value}, "
@@ -1446,6 +1466,7 @@ def build_multi_threshold_email_content(
 				f"threshold={format_scientific_optional(threshold)}"
 			)
 		text_lines.append('')
+		total_detections += len(rendered_rows_for_text)
 
 		potential_rows_html = _build_detection_rows_html(
 			potential_detections,
