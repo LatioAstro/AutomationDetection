@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from AutomatedScript import build_multi_threshold_email_content
+from AutomatedScript import build_multi_threshold_email_content, plot_light_curve
 
 
 def test_build_multi_threshold_email_content_uses_section_specific_mdp_values() -> None:
@@ -120,6 +120,21 @@ def test_build_multi_threshold_email_content_falls_back_to_counts_and_latest_mdp
     assert 'Yes' in html_body
     assert '88.88' in html_body
     assert inline_images == []
+
+
+def test_plot_light_curve_supports_incremental_scan_columns(tmp_path: Path) -> None:
+    output_path = tmp_path / 'incremental_plot.png'
+    dataframe = pd.DataFrame(
+        {
+            'new_point_mjd': [60000.0, 60007.0],
+            'new_point_flux': [1.0e-7, 1.5e-7],
+            'new_point_flux_error': [1.0e-8, 1.2e-8],
+        }
+    )
+
+    plot_light_curve(dataframe, 'Test Source', output_path, title_suffix='incremental test')
+
+    assert output_path.exists()
 
 
 def test_build_multi_threshold_email_content_uses_saved_source_json_summary(tmp_path: Path) -> None:

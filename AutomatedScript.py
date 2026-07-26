@@ -208,6 +208,13 @@ def latest_highlighted_flare_stats(
 	return stats
 
 
+def _resolve_plot_column(dataframe: pd.DataFrame, *candidates: str) -> str:
+	for candidate in candidates:
+		if candidate in dataframe.columns:
+			return candidate
+	raise KeyError(f'No plotting columns found. Expected one of: {", ".join(candidates)}')
+
+
 def plot_light_curve(
 	dataframe: pd.DataFrame,
 	source_name: str,
@@ -225,13 +232,17 @@ def plot_light_curve(
 	This function generates a light curve plot for a given source, with options to highlight flare points and intervals, and to show quiescent background and flare threshold levels. 
 	The plot is saved to the specified output path.
 	"""
+	time_column = _resolve_plot_column(dataframe, 'time_MJD', 'new_point_mjd')
+	flux_column = _resolve_plot_column(dataframe, 'flux', 'new_point_flux')
+	error_column = _resolve_plot_column(dataframe, 'flux_error', 'new_point_flux_error')
+
 	if time_range is not None:
 		start_mjd, end_mjd = time_range
-		dataframe = dataframe.loc[dataframe['time_MJD'].between(start_mjd, end_mjd)].copy()
+		dataframe = dataframe.loc[dataframe[time_column].between(start_mjd, end_mjd)].copy()
 		if dataframe.empty:
 			raise ValueError(f'No light-curve points found in the requested MJD range for {source_name}.')
 		if flare_points is not None:
-			flare_points = flare_points.loc[flare_points['time_MJD'].between(start_mjd, end_mjd)].copy()
+			flare_points = flare_points.loc[flare_points[time_column].between(start_mjd, end_mjd)].copy()
 		if flare_intervals is not None:
 			flare_intervals = [
 				(max(interval_start, start_mjd), min(interval_end, end_mjd))
@@ -248,9 +259,9 @@ def plot_light_curve(
 	output_path.parent.mkdir(parents=True, exist_ok=True)
 	fig, ax = plt.subplots(figsize=(PLOT_FIGURE_WIDTH, PLOT_FIGURE_HEIGHT))
 	ax.errorbar(
-		dataframe['time_MJD'],
-		dataframe['flux'],
-		yerr=dataframe['flux_error'],
+		dataframe[time_column],
+		dataframe[flux_column],
+		yerr=dataframe[error_column],
 		fmt='o-',
 		color='black',
 		ecolor='gray',
@@ -312,9 +323,11 @@ def plot_light_curve(
 
 	# If we have specific flare points, we highlight them with red markers.
 	if flare_points is not None and not flare_points.empty:
+		flare_time_column = _resolve_plot_column(flare_points, 'time_MJD', 'new_point_mjd')
+		flare_flux_column = _resolve_plot_column(flare_points, 'flux', 'new_point_flux')
 		ax.scatter(
-			flare_points['time_MJD'],
-			flare_points['flux'],
+			flare_points[flare_time_column],
+			flare_points[flare_flux_column],
 			color='crimson',
 			s=30,
 			zorder=4,
