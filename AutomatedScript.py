@@ -364,6 +364,54 @@ def format_scientific_optional(value: float | int | np.floating | None, missing:
 	return format_optional_float(value, '.3e', missing)
 
 
+def _coerce_count(value: object) -> int:
+	try:
+		if value is None or (isinstance(value, float) and np.isnan(value)):
+			return 0
+		return int(float(value))
+	except (TypeError, ValueError):
+		return 0
+
+
+def _select_latest_mdp99(
+	latest_mdp99: float | int | np.floating | None,
+	latest_available: bool,
+	result_df: pd.DataFrame | None,
+) -> tuple[float, bool]:
+	latest_value = float(latest_mdp99) if latest_mdp99 is not None and np.isfinite(latest_mdp99) else np.nan
+	if np.isfinite(latest_value):
+		return latest_value, bool(latest_available)
+	if result_df is None or result_df.empty:
+		return np.nan, False
+	available_rows = result_df.loc[result_df.get('mdp99_available', False), 'mdp99_percent'].dropna()
+	if available_rows.empty:
+		return np.nan, False
+	fallback_value = float(available_rows.iloc[-1])
+	if np.isfinite(fallback_value):
+		return fallback_value, True
+	return np.nan, False
+
+
+def _pick_first_numeric(*values: object) -> float | np.floating | None:
+	for value in values:
+		if value is None:
+			continue
+		if isinstance(value, str):
+			if not value.strip():
+				continue
+			try:
+				return float(value)
+			except ValueError:
+				continue
+		try:
+			if np.isnan(value):
+				continue
+		except TypeError:
+			pass
+		return float(value)
+	return np.nan
+
+
 def _latest_flaring_downward_steps(result: pd.DataFrame) -> int:
 	"""
 	Count trailing consecutive downward flux steps in the latest contiguous flaring segment.
@@ -443,15 +491,30 @@ def _build_detection_rows_html(
 						f'border:1px solid #d1d5db;" />'
 					)
 
-		latest_mdp = row.get(mdp_column or 'latest_mdp99_percent', np.nan)
+		latest_mdp = _pick_first_numeric(
+			row.get(mdp_column or 'latest_mdp99_percent', np.nan),
+			row.get('latest_mdp99_percent', np.nan),
+			row.get('latest_potential_mdp99_percent', np.nan),
+			row.get('latest_active_mdp99_percent', np.nan),
+			row.get('best_potential_mdp99_percent', np.nan),
+			row.get('best_active_mdp99_percent', np.nan),
+		)
 		peak_value = row.get('peak_potential_flux')
 		peak_flux = peak_value if np.isfinite(peak_value) else row.get('latest_new_point_flux_cosi', np.nan)
 		average_value = row.get('mean_potential_flux')
 		average_flux = average_value if np.isfinite(average_value) else row.get('source_average_flux', np.nan)
 		threshold = row.get('latest_threshold_cosi_flux', row.get('latest_flare_flux_threshold', np.nan))
 
-		potential_value = bool(row.get('had_potential_flare_points', row.get('latest_potential_flare_point', False)))
-		active_value = bool(row.get('had_active_flare_weeks', row.get(active_column, False)))
+		potential_value = bool(
+			row.get('had_potential_flare_points', False)
+			or row.get('latest_potential_flare_point', False)
+			or _coerce_count(row.get('potential_points', 0)) > 0
+		)
+		active_value = bool(
+			row.get('had_active_flare_weeks', False)
+			or row.get(active_column, False)
+			or _coerce_count(row.get('active_flare_weeks', 0)) > 0
+		)
 		row_style = 'background:#ecfdf3;' if active_value else ''
 		rows_html.append(
 			f'<tr style="{row_style}">'
@@ -1006,8 +1069,8 @@ def build_incremental_summary_for_source(
 	latest_active = bool(latest_row['flare_active'])
 	latest_confirmed_active = bool(latest_row.get('confirmed_flare_active', False))
 	latest_confirmed_sigma_delta = float(latest_row['confirmed_sigma_delta']) if np.isfinite(latest_row.get('confirmed_sigma_delta', np.nan)) else np.nan
-	latest_mdp99 = float(latest_row['mdp99_percent']) if np.isfinite(latest_row['mdp99_percent']) else np.nan
-	latest_mdp99_available = bool(latest_row['mdp99_available'])
+	latest_mdp99 = float(latest_row['mdp99_percent']) if np.isfinite(latest_row.get('mdp99_percent', np.nan)) else np.nan
+	latest_mdp99_available = bool(latest_row.get('mdp99_available', False))
 	latest_potential_mdp99 = latest_mdp99 if latest_potential else np.nan
 	flare_intervals = build_active_intervals(active_rows, start_column='flare_start_mjd')
 	flare_mdp_labels = build_interval_mdp_labels(active_rows, start_column='flare_start_mjd')
@@ -1086,11 +1149,14 @@ def build_incremental_summary_for_source(
 		arm_reduction=float(args.arm_reduction),
 		average_mu=float(args.mdp99_average_mu),
 	)
-	latest_mdp99 = float(latest_flare_stats['latest_highlighted_mdp99_percent']) if latest_flare_stats['latest_highlighted_mdp99_available'] else np.nan
-	latest_mdp99_available = bool(latest_flare_stats['latest_highlighted_mdp99_available'])
+	latest_mdp99, latest_mdp99_available = _select_latest_mdp99(
+		float(latest_flare_stats['latest_highlighted_mdp99_percent']) if latest_flare_stats['latest_highlighted_mdp99_available'] else np.nan,
+		bool(latest_flare_stats['latest_highlighted_mdp99_available']),
+		result,
+	)
 	potential_mdp = potential_rows.loc[potential_rows['mdp99_available']].copy()
 	best_potential_mdp99 = float(potential_mdp['mdp99_percent'].min()) if not potential_mdp.empty else np.nan
-	latest_potential_mdp99 = latest_mdp99
+	latest_potential_mdp99 = float(potential_mdp['mdp99_percent'].iloc[-1]) if not potential_mdp.empty else latest_mdp99
 	peak_potential_flux = float(latest_flare_stats['latest_highlighted_peak_flux_cosi']) if np.isfinite(latest_flare_stats['latest_highlighted_peak_flux_cosi']) else np.nan
 	mean_potential_flux = float(latest_flare_stats['latest_highlighted_average_flux_cosi']) if np.isfinite(latest_flare_stats['latest_highlighted_average_flux_cosi']) else np.nan
 	source_average_flux = float(latest_row['average_flux_full_series'] * flux_scale) if np.isfinite(latest_row['average_flux_full_series']) else np.nan
@@ -1100,7 +1166,7 @@ def build_incremental_summary_for_source(
 	omit_from_attention = bool(latest_downward_steps >= 2)
 	active_mdp = active_rows.loc[active_rows['mdp99_available']].copy()
 	best_active_mdp99 = float(active_mdp['mdp99_percent'].min()) if not active_mdp.empty else np.nan
-	latest_active_mdp99 = float(active_mdp.iloc[-1]['mdp99_percent']) if not active_mdp.empty else np.nan
+	latest_active_mdp99 = float(active_mdp.iloc[-1]['mdp99_percent']) if not active_mdp.empty else latest_mdp99
 	if not active_rows.empty:
 		first_active = active_rows.iloc[0]
 		last_active = active_rows.iloc[-1]
@@ -1211,9 +1277,21 @@ def build_multi_threshold_email_content(
 			average_value = row.get('mean_potential_flux')
 			average_flux = average_value if np.isfinite(average_value) else row.get('source_average_flux', np.nan)
 			threshold = row.get('latest_threshold_cosi_flux', row.get('latest_flare_flux_threshold', np.nan))
-			potential_value = bool(row.get('had_potential_flare_points', row.get('latest_potential_flare_point', False)))
-			active_value = bool(row.get('had_active_flare_weeks', row.get('latest_flare_active', False)))
-			confirmed_value = bool(row.get('had_confirmed_flare_weeks', row.get('latest_confirmed_flare_active', False)))
+			potential_value = bool(
+				row.get('had_potential_flare_points', False)
+				or row.get('latest_potential_flare_point', False)
+				or _coerce_count(row.get('potential_points', 0)) > 0
+			)
+			active_value = bool(
+				row.get('had_active_flare_weeks', False)
+				or row.get('latest_flare_active', False)
+				or _coerce_count(row.get('active_flare_weeks', 0)) > 0
+			)
+			confirmed_value = bool(
+				row.get('had_confirmed_flare_weeks', False)
+				or row.get('latest_confirmed_flare_active', False)
+				or _coerce_count(row.get('confirmed_flare_weeks', 0)) > 0
+			)
 			text_lines.append(
 				f"  - {name}: potential={potential_value}, "
 				f"active={active_value}, confirmed={confirmed_value}, "

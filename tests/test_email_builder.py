@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from AutomatedScript import build_multi_threshold_email_content
@@ -70,4 +71,49 @@ def test_build_multi_threshold_email_content_uses_section_specific_mdp_values() 
     assert '12.34' in html_body
     assert '45.67' in html_body
     assert html_body.count('<tr') >= 4
+    assert inline_images == []
+
+
+def test_build_multi_threshold_email_content_falls_back_to_counts_and_latest_mdp() -> None:
+    detections_by_multiplier = {
+        3.0: pd.DataFrame(
+            [
+                {
+                    'Name': 'Fallback Source',
+                    'potential_points': 2,
+                    'active_flare_weeks': 1,
+                    'confirmed_flare_weeks': 0,
+                    'had_potential_flare_points': False,
+                    'had_active_flare_weeks': False,
+                    'had_confirmed_flare_weeks': False,
+                    'latest_potential_flare_point': False,
+                    'latest_flare_active': False,
+                    'latest_confirmed_flare_active': False,
+                    'latest_mdp99_percent': 88.88,
+                    'latest_potential_mdp99_percent': np.nan,
+                    'latest_active_mdp99_percent': np.nan,
+                    'peak_potential_flux': np.nan,
+                    'mean_potential_flux': np.nan,
+                    'latest_threshold_cosi_flux': np.nan,
+                    'latest_confirmed_sigma_delta': np.nan,
+                    'potential_flare_plot': '',
+                    'confirmed_flare_plot': '',
+                    'latest_new_point_flux_cosi': np.nan,
+                    'latest_flare_flux_threshold': np.nan,
+                }
+            ]
+        )
+    }
+
+    text_body, html_body, inline_images, total_detections = build_multi_threshold_email_content(
+        detections_by_multiplier,
+        '2026-W30',
+        include_potential_plots=False,
+        include_confirmed_plots=False,
+    )
+
+    assert total_detections == 1
+    assert 'Fallback Source' in text_body
+    assert 'Yes' in html_body
+    assert '88.88' in html_body
     assert inline_images == []
