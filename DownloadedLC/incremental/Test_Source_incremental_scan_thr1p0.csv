@@ -1,2 +1,2 @@
 flare_active,potential_flare_point,confirmed_flare_active,quiescent_background_origin,quiescent_background_cache_path,new_point_mjd,new_point_flux,flare_flux_threshold,average_flux_full_series,mdp99_percent,mdp99_available,confirmed_sigma_delta,flare_start_mjd,confirmed_flare_start_mjd
-False,False,False,cache,/tmp/pytest-of-lkoo/pytest-6/test_build_incremental_summary0/qb.csv,60000.0,1e-07,1e-07,8e-08,12.34,True,1.5,60000.0,60000.0
+False,False,False,cache,/tmp/pytest-of-lkoo/pytest-12/test_build_incremental_summary0/qb.csv,60000.0,1e-07,1e-07,8e-08,12.34,True,1.5,60000.0,60000.0

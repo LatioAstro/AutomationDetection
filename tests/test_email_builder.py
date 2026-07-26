@@ -1,10 +1,15 @@
 import json
+import sys
 from argparse import Namespace
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'PythonFiles'))
+
+from PythonFiles import notebook_pipeline
 
 import AutomatedScript
 from AutomatedScript import build_incremental_summary_for_source, build_multi_threshold_email_content, plot_light_curve
@@ -140,6 +145,29 @@ def test_plot_light_curve_supports_incremental_scan_columns(tmp_path: Path) -> N
     assert output_path.exists()
 
 
+def test_incremental_flare_scan_marks_threshold_crossings_as_potential_flare_points(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(notebook_pipeline, 'load_weekly_database', lambda *args, **kwargs: pd.DataFrame({'source_name': ['Test Source'], 'photon_flux2': [1.0], 'photon_flux_error2': [0.1], 'tmin': [0], 'cadence': ['weekly']}))
+    monkeypatch.setattr(notebook_pipeline, 'build_source_arrays', lambda *args, **kwargs: (None, np.array([60000.0, 60007.0, 60014.0]), np.array([1.0e-7, 3.0e-7, 1.0e-7]), np.array([1.0e-8, 1.0e-8, 1.0e-8]), 1.0e-7))
+    monkeypatch.setattr(notebook_pipeline, 'resolve_quiescent_background', lambda **kwargs: {'quiescent_background': 1.0e-7, 'quiescent_background_error': 1.0e-8, 'detection_threshold': 1.0e-7, 'origin': 'cache', 'cache_path': str(tmp_path / 'qb.csv')})
+
+    result = notebook_pipeline.incremental_flare_scan(
+        source_name='Test Source',
+        database_path='db.csv',
+        percent=0.3,
+        cadence='weekly',
+        lookback_weeks=4.0,
+        detection_method='sigma',
+        flare_threshold_multiplier=2.0,
+        confirmed_sigma_threshold=2.0,
+        consecutive_points=1,
+        cache_path=str(tmp_path / 'qb_cache.csv'),
+        source_json_path=None,
+    )
+
+    assert result['potential_flare_point'].tolist() == [True, False]
+    assert result['flare_active'].tolist() == [False, False]
+
+
 def test_build_incremental_summary_for_source_builds_summary_before_writing_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     result = pd.DataFrame(
         [
@@ -191,6 +219,73 @@ def test_build_incremental_summary_for_source_builds_summary_before_writing_json
     assert summary_row['Name'] == 'Test Source'
     assert returned_result.equals(result)
     assert summary_row['latest_new_point_flux'] == pytest.approx(1.0e-7)
+
+
+def test_build_multi_threshold_email_content_splits_potential_and_active_rows_by_state() -> None:
+    detections_by_multiplier = {
+        3.0: pd.DataFrame(
+            [
+                {
+                    'Name': 'Potential Only',
+                    'potential_points': 1,
+                    'active_flare_weeks': 0,
+                    'confirmed_flare_weeks': 0,
+                    'had_potential_flare_points': True,
+                    'had_active_flare_weeks': False,
+                    'had_confirmed_flare_weeks': False,
+                    'latest_potential_flare_point': True,
+                    'latest_flare_active': False,
+                    'latest_confirmed_flare_active': False,
+                    'latest_mdp99_percent': np.nan,
+                    'latest_potential_mdp99_percent': 12.34,
+                    'latest_active_mdp99_percent': np.nan,
+                    'peak_potential_flux': 1.23e-7,
+                    'mean_potential_flux': 1.10e-7,
+                    'latest_threshold_cosi_flux': 8.0e-8,
+                    'latest_confirmed_sigma_delta': np.nan,
+                    'potential_flare_plot': '',
+                    'confirmed_flare_plot': '',
+                    'latest_new_point_flux_cosi': 1.2e-7,
+                    'latest_flare_flux_threshold': 5e-8,
+                },
+                {
+                    'Name': 'Active Source',
+                    'potential_points': 2,
+                    'active_flare_weeks': 1,
+                    'confirmed_flare_weeks': 1,
+                    'had_potential_flare_points': True,
+                    'had_active_flare_weeks': True,
+                    'had_confirmed_flare_weeks': True,
+                    'latest_potential_flare_point': True,
+                    'latest_flare_active': True,
+                    'latest_confirmed_flare_active': True,
+                    'latest_mdp99_percent': np.nan,
+                    'latest_potential_mdp99_percent': np.nan,
+                    'latest_active_mdp99_percent': 56.78,
+                    'peak_potential_flux': 2.34e-7,
+                    'mean_potential_flux': 2.20e-7,
+                    'latest_threshold_cosi_flux': 9.0e-8,
+                    'latest_confirmed_sigma_delta': 2.2,
+                    'potential_flare_plot': '',
+                    'confirmed_flare_plot': '',
+                    'latest_new_point_flux_cosi': 2.3e-7,
+                    'latest_flare_flux_threshold': 6e-8,
+                },
+            ]
+        )
+    }
+
+    _, html_body, _, _ = build_multi_threshold_email_content(
+        detections_by_multiplier,
+        '2026-W30',
+        include_potential_plots=False,
+        include_confirmed_plots=False,
+    )
+
+    assert html_body.count('Potential Only') == 1
+    assert html_body.count('Active Source') >= 1
+    assert '12.34' in html_body
+    assert '56.78' in html_body
 
 
 def test_build_multi_threshold_email_content_uses_saved_source_json_summary(tmp_path: Path) -> None:

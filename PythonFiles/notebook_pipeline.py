@@ -585,7 +585,7 @@ def incremental_flare_scan(
             and new_flux > source_qb
         )
 
-        potential_candidate = above_double_qb if detection_method in {'original', 'both'} else False
+        potential_candidate = bool(above_double_qb)
 
         if potential_candidate:
             streak += 1

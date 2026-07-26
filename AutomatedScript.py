@@ -1369,8 +1369,31 @@ def build_multi_threshold_email_content(
 	for multiplier in sorted(detections_by_multiplier.keys()):
 		detections = detections_by_multiplier[multiplier].sort_values('Name').copy()
 		total_detections += len(detections)
-		potential_detections = detections.sort_values('Name').copy()
-		confirmed_detections = detections.sort_values('Name').copy()
+		potential_detections = []
+		confirmed_detections = []
+		for _, row in detections.sort_values('Name').iterrows():
+			resolved_row = _resolve_row_with_saved_email_summary(row)
+			potential_value = bool(
+				resolved_row.get('had_potential_flare_points', False)
+				or resolved_row.get('latest_potential_flare_point', False)
+				or _coerce_count(resolved_row.get('potential_points', 0)) > 0
+			)
+			active_value = bool(
+				resolved_row.get('had_active_flare_weeks', False)
+				or resolved_row.get('latest_flare_active', False)
+				or _coerce_count(resolved_row.get('active_flare_weeks', 0)) > 0
+			)
+			confirmed_value = bool(
+				resolved_row.get('had_confirmed_flare_weeks', False)
+				or resolved_row.get('latest_confirmed_flare_active', False)
+				or _coerce_count(resolved_row.get('confirmed_flare_weeks', 0)) > 0
+			)
+			if potential_value:
+				potential_detections.append(resolved_row)
+			if active_value or confirmed_value:
+				confirmed_detections.append(resolved_row)
+		potential_detections = pd.DataFrame(potential_detections)
+		confirmed_detections = pd.DataFrame(confirmed_detections)
 		print(
 			f'Email builder: multiplier={multiplier:g} detections={len(detections)} '
 			f'potential_table_rows={len(potential_detections)} confirmed_table_rows={len(confirmed_detections)}'
@@ -1387,7 +1410,11 @@ def build_multi_threshold_email_content(
 		for _, row in detections.iterrows():
 			resolved_row = _resolve_row_with_saved_email_summary(row)
 			name = str(resolved_row['Name'])
-			latest_mdp = resolved_row.get('latest_mdp99_percent', np.nan)
+			latest_mdp = _pick_first_numeric(
+			resolved_row.get('latest_mdp99_percent', np.nan),
+			resolved_row.get('latest_potential_mdp99_percent', np.nan),
+			resolved_row.get('latest_active_mdp99_percent', np.nan),
+		)
 			confirmed_sigma = resolved_row.get('latest_confirmed_sigma_delta', np.nan)
 			peak_value = resolved_row.get('peak_potential_flux')
 			peak_flux = peak_value if np.isfinite(peak_value) else resolved_row.get('latest_new_point_flux_cosi', np.nan)
