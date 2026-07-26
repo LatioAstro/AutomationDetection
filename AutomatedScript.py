@@ -449,12 +449,14 @@ def _build_detection_rows_html(
 		average_flux = average_value if np.isfinite(average_value) else row.get('source_average_flux', np.nan)
 		threshold = row.get('latest_threshold_cosi_flux', row.get('latest_flare_flux_threshold', np.nan))
 
-		row_style = 'background:#ecfdf3;' if is_active else ''
+		potential_value = bool(row.get('had_potential_flare_points', row.get('latest_potential_flare_point', False)))
+		active_value = bool(row.get('had_active_flare_weeks', row.get(active_column, False)))
+		row_style = 'background:#ecfdf3;' if active_value else ''
 		rows_html.append(
 			f'<tr style="{row_style}">'
 			f'<td>{html.escape(name)}</td>'
-			f'<td>{"Yes" if bool(row["latest_potential_flare_point"]) else "No"}</td>'
-			f'<td>{"Yes" if is_active else "No"}</td>'
+			f'<td>{"Yes" if potential_value else "No"}</td>'
+			f'<td>{"Yes" if active_value else "No"}</td>'
 			f'<td>{format_optional_float(latest_mdp)}</td>'
 			f'<td>{format_scientific_optional(peak_flux)}</td>'
 			f'<td>{format_scientific_optional(average_flux)}</td>'
@@ -1016,7 +1018,7 @@ def build_incremental_summary_for_source(
 	potential_plot_path = ''
 	confirmed_plot_path = ''
 	if not result.empty:
-		if latest_potential or latest_active:
+		if not potential_rows.empty or not active_rows.empty:
 			flare_plot_path = str(plot_base.with_suffix('').with_name(f'{safe_name}_flare_plot.png').relative_to(ROOT))
 			plot_light_curve(
 				result,
@@ -1030,7 +1032,7 @@ def build_incremental_summary_for_source(
 				quiescent_background=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
 				flare_threshold=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
 			)
-		if latest_potential:
+		if not potential_rows.empty:
 			potential_plot_path = str(plot_base.with_suffix('').with_name(f'{safe_name}_potential_plot.png').relative_to(ROOT))
 			plot_light_curve(
 				result,
@@ -1044,7 +1046,7 @@ def build_incremental_summary_for_source(
 				quiescent_background=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
 				flare_threshold=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
 			)
-		if latest_confirmed_active:
+		if not confirmed_rows.empty:
 			confirmed_plot_path = str(plot_base.with_suffix('').with_name(f'{safe_name}_confirmed_plot.png').relative_to(ROOT))
 			plot_light_curve(
 				result,
@@ -1129,11 +1131,14 @@ def build_incremental_summary_for_source(
 		'potential_points': int(len(potential_rows)),
 		'active_flare_weeks': int(len(active_rows)),
 		'had_any_detection': bool(len(potential_rows) > 0 or len(active_rows) > 0 or len(confirmed_rows) > 0),
+		'had_potential_flare_points': bool(len(potential_rows) > 0),
+		'had_active_flare_weeks': bool(len(active_rows) > 0),
+		'had_confirmed_flare_weeks': bool(len(confirmed_rows) > 0),
 		'latest_new_point_mjd': float(latest_row['new_point_mjd']),
 		'latest_new_point_flux': float(latest_row['new_point_flux']),
 		'latest_flare_flux_threshold': float(latest_row['flare_flux_threshold']),
-		'latest_potential_flare_point': latest_potential,
-		'latest_flare_active': latest_active,
+		'latest_potential_flare_point': latest_potential or bool(len(potential_rows) > 0),
+		'latest_flare_active': latest_active or bool(len(active_rows) > 0),
 		'latest_mdp99_percent': latest_mdp99,
 		'latest_mdp99_available': latest_mdp99_available,
 		'latest_potential_mdp99_percent': latest_potential_mdp99,
@@ -1149,7 +1154,7 @@ def build_incremental_summary_for_source(
 		'lookback_weeks_run': float(args.lookback_weeks),
 		'detection_method_run': str(args.detection_method),
 		'confirmed_flare_weeks': int(len(confirmed_rows)),
-		'latest_confirmed_flare_active': latest_confirmed_active,
+		'latest_confirmed_flare_active': latest_confirmed_active or bool(len(confirmed_rows) > 0),
 		'latest_confirmed_sigma_delta': latest_confirmed_sigma_delta,
 		'flare_threshold_multiplier_run': run_threshold_multiplier,
 		'latest_flaring_downward_steps': int(latest_downward_steps),
