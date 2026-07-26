@@ -23,7 +23,7 @@ PYTHON_FILES = ROOT / 'PythonFiles'
 OUTPUT_DIR = ROOT / 'DownloadedLC'
 INCREMENTAL_OUTPUT_DIR = OUTPUT_DIR / 'incremental'
 SOURCES_DIR = ROOT / 'Sources'
-WEBSITE_SOURCE_DATA_DIR = Path('/home/lkoo/projects/autodetectwebsite/data/src_data')
+WEBSITE_SOURCE_DATA_DIR = ROOT / "Sources"
 INCREMENTAL_WEEKLY_SUMMARY_PATH = INCREMENTAL_OUTPUT_DIR / 'weekly_incremental_summary.csv'
 
 sys.path.insert(0, str(PYTHON_FILES))
@@ -1401,7 +1401,7 @@ def run_incremental_mode(args: argparse.Namespace) -> int:
 	print(f'Wrote combined weekly incremental summary to {INCREMENTAL_WEEKLY_SUMMARY_PATH.relative_to(ROOT)}')
 
 	maybe_send_weekly_detection_email_multi(args, detections_by_multiplier, summary_paths_by_multiplier)
-	sync_source_json_files_to_website()
+	#sync_source_json_files_to_website()
 	removed_count, removed_bytes = cleanup_incremental_scan_csvs()
 	if removed_count > 0:
 		print(f'Cleaned up {removed_count} incremental scan CSV file(s), freeing {removed_bytes} bytes.')
