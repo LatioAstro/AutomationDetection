@@ -31,8 +31,8 @@ def test_build_multi_threshold_email_content_uses_section_specific_mdp_values() 
                     'latest_flare_active': False,
                     'latest_confirmed_flare_active': True,
                     'latest_mdp99_percent': 99.99,
-                    'latest_potential_mdp99_percent': 12.34,
-                    'latest_active_mdp99_percent': 45.67,
+                    'latest_potential_mdp99_percent': 90.0,
+                    'latest_active_mdp99_percent': 80.0,
                     'peak_potential_flux': 1.23e-7,
                     'mean_potential_flux': 1.10e-7,
                     'latest_threshold_cosi_flux': 8.0e-8,
@@ -54,8 +54,8 @@ def test_build_multi_threshold_email_content_uses_section_specific_mdp_values() 
                     'latest_flare_active': True,
                     'latest_confirmed_flare_active': False,
                     'latest_mdp99_percent': 78.91,
-                    'latest_potential_mdp99_percent': 23.45,
-                    'latest_active_mdp99_percent': 56.78,
+                    'latest_potential_mdp99_percent': 70.0,
+                    'latest_active_mdp99_percent': 60.0,
                     'peak_potential_flux': 2.34e-7,
                     'mean_potential_flux': 2.20e-7,
                     'latest_threshold_cosi_flux': 9.0e-8,
@@ -79,8 +79,8 @@ def test_build_multi_threshold_email_content_uses_section_specific_mdp_values() 
     assert total_detections == 2
     assert 'Test Source' in text_body
     assert 'Second Source' in text_body
-    assert '12.34' in html_body
-    assert '45.67' in html_body
+    assert '90.00' in html_body
+    assert '80.00' in html_body
     assert html_body.count('<tr') >= 4
     assert inline_images == []
 
@@ -237,7 +237,7 @@ def test_build_multi_threshold_email_content_splits_potential_and_active_rows_by
                     'latest_flare_active': False,
                     'latest_confirmed_flare_active': False,
                     'latest_mdp99_percent': np.nan,
-                    'latest_potential_mdp99_percent': 12.34,
+                    'latest_potential_mdp99_percent': 90.0,
                     'latest_active_mdp99_percent': np.nan,
                     'peak_potential_flux': 1.23e-7,
                     'mean_potential_flux': 1.10e-7,
@@ -261,7 +261,7 @@ def test_build_multi_threshold_email_content_splits_potential_and_active_rows_by
                     'latest_confirmed_flare_active': True,
                     'latest_mdp99_percent': np.nan,
                     'latest_potential_mdp99_percent': np.nan,
-                    'latest_active_mdp99_percent': 56.78,
+                    'latest_active_mdp99_percent': 80.0,
                     'peak_potential_flux': 2.34e-7,
                     'mean_potential_flux': 2.20e-7,
                     'latest_threshold_cosi_flux': 9.0e-8,
@@ -284,11 +284,11 @@ def test_build_multi_threshold_email_content_splits_potential_and_active_rows_by
 
     assert html_body.count('Potential Only') == 1
     assert html_body.count('Active Source') >= 1
-    assert '12.34' in html_body
-    assert '56.78' in html_body
+    assert '90.00' in html_body
+    assert '80.00' in html_body
 
 
-def test_build_multi_threshold_email_content_filters_sources_with_mdp_over_50_percent() -> None:
+def test_build_multi_threshold_email_content_filters_sources_with_mdp_above_100_percent() -> None:
     detections_by_multiplier = {
         3.0: pd.DataFrame(
             [
@@ -303,8 +303,8 @@ def test_build_multi_threshold_email_content_filters_sources_with_mdp_over_50_pe
                     'latest_potential_flare_point': True,
                     'latest_flare_active': False,
                     'latest_confirmed_flare_active': False,
-                    'latest_mdp99_percent': 60.0,
-                    'latest_potential_mdp99_percent': 60.0,
+                    'latest_mdp99_percent': 120.0,
+                    'latest_potential_mdp99_percent': 120.0,
                     'latest_active_mdp99_percent': np.nan,
                     'peak_potential_flux': 1.23e-7,
                     'mean_potential_flux': 1.10e-7,
@@ -326,8 +326,8 @@ def test_build_multi_threshold_email_content_filters_sources_with_mdp_over_50_pe
                     'latest_potential_flare_point': True,
                     'latest_flare_active': False,
                     'latest_confirmed_flare_active': False,
-                    'latest_mdp99_percent': 20.0,
-                    'latest_potential_mdp99_percent': 20.0,
+                    'latest_mdp99_percent': 80.0,
+                    'latest_potential_mdp99_percent': 80.0,
                     'latest_active_mdp99_percent': np.nan,
                     'peak_potential_flux': 1.23e-7,
                     'mean_potential_flux': 1.10e-7,
@@ -369,8 +369,8 @@ def test_build_multi_threshold_email_content_uses_saved_source_json_summary(tmp_
                         'latestFlareActive': True,
                         'latestConfirmedFlareActive': True,
                         'latestMdp99Percent': 77.7,
-                        'latestPotentialMdp99Percent': 11.11,
-                        'latestActiveMdp99Percent': 22.22,
+                        'latestPotentialMdp99Percent': 90.0,
+                        'latestActiveMdp99Percent': 80.0,
                     }
                 }
             }
@@ -419,5 +419,5 @@ def test_build_multi_threshold_email_content_uses_saved_source_json_summary(tmp_
     assert 'Saved JSON Source' in html_body
     assert 'Yes' in html_body
     assert '77.7' in text_body
-    assert '11.11' in html_body
-    assert '22.22' in html_body
+    assert '110.00' not in html_body
+    assert '120.00' not in html_body

@@ -437,7 +437,7 @@ def _should_filter_row_for_section_mdp(resolved_row: dict, mdp_column: str | Non
 		return False
 	if not np.isfinite(numeric_value):
 		return False
-	return numeric_value > 50.0
+	return numeric_value > 100.0
 
 
 def _load_saved_email_summary(row: object) -> dict | None:
