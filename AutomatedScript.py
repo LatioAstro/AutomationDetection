@@ -1405,7 +1405,7 @@ def build_multi_threshold_email_content(
 				or resolved_row.get('latest_confirmed_flare_active', False)
 				or _coerce_count(resolved_row.get('confirmed_flare_weeks', 0)) > 0
 			)
-			include_in_potential = potential_value and not _should_filter_row_for_section_mdp(resolved_row, 'latest_potential_mdp99_percent')
+			include_in_potential = potential_value and not active_value and not _should_filter_row_for_section_mdp(resolved_row, 'latest_potential_mdp99_percent')
 			include_in_confirmed = (active_value or confirmed_value) and not _should_filter_row_for_section_mdp(resolved_row, 'latest_active_mdp99_percent')
 			if include_in_potential:
 				potential_detections.append(resolved_row)
