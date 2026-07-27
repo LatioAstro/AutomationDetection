@@ -23,20 +23,20 @@ def test_build_multi_threshold_email_content_uses_section_specific_mdp_values() 
                     'Name': 'Test Source',
                     'potential_points': 1,
                     'active_flare_weeks': 0,
-                    'confirmed_flare_weeks': 1,
+                    'confirmed_flare_weeks': 0,
                     'had_potential_flare_points': True,
                     'had_active_flare_weeks': False,
-                    'had_confirmed_flare_weeks': True,
+                    'had_confirmed_flare_weeks': False,
                     'latest_potential_flare_point': True,
                     'latest_flare_active': False,
-                    'latest_confirmed_flare_active': True,
+                    'latest_confirmed_flare_active': False,
                     'latest_mdp99_percent': 99.99,
                     'latest_potential_mdp99_percent': 90.0,
-                    'latest_active_mdp99_percent': 80.0,
+                    'latest_active_mdp99_percent': np.nan,
                     'peak_potential_flux': 1.23e-7,
                     'mean_potential_flux': 1.10e-7,
                     'latest_threshold_cosi_flux': 8.0e-8,
-                    'latest_confirmed_sigma_delta': 4.1,
+                    'latest_confirmed_sigma_delta': np.nan,
                     'potential_flare_plot': 'missing_plot.png',
                     'confirmed_flare_plot': 'missing_plot.png',
                     'latest_new_point_flux_cosi': 1.2e-7,
@@ -80,7 +80,7 @@ def test_build_multi_threshold_email_content_uses_section_specific_mdp_values() 
     assert 'Test Source' in text_body
     assert 'Second Source' in text_body
     assert '90.00' in html_body
-    assert '80.00' in html_body
+    assert '60.00' in html_body
     assert html_body.count('<tr') >= 4
     assert inline_images == []
 
@@ -286,6 +286,50 @@ def test_build_multi_threshold_email_content_splits_potential_and_active_rows_by
     assert html_body.count('Active Source') >= 1
     assert '90.00' in html_body
     assert '80.00' in html_body
+
+
+def test_build_multi_threshold_email_content_excludes_confirmed_rows_from_potential_section() -> None:
+    detections_by_multiplier = {
+        3.0: pd.DataFrame(
+            [
+                {
+                    'Name': 'Confirmed Not Currently Active',
+                    'potential_points': 2,
+                    'active_flare_weeks': 0,
+                    'confirmed_flare_weeks': 1,
+                    'had_potential_flare_points': True,
+                    'had_active_flare_weeks': False,
+                    'had_confirmed_flare_weeks': True,
+                    'latest_potential_flare_point': True,
+                    'latest_flare_active': False,
+                    'latest_confirmed_flare_active': True,
+                    'latest_mdp99_percent': np.nan,
+                    'latest_potential_mdp99_percent': 90.0,
+                    'latest_active_mdp99_percent': 80.0,
+                    'peak_potential_flux': 1.23e-7,
+                    'mean_potential_flux': 1.10e-7,
+                    'latest_threshold_cosi_flux': 8.0e-8,
+                    'latest_confirmed_sigma_delta': 2.5,
+                    'potential_flare_plot': '',
+                    'confirmed_flare_plot': '',
+                    'latest_new_point_flux_cosi': 1.2e-7,
+                    'latest_flare_flux_threshold': 5e-8,
+                },
+            ]
+        )
+    }
+
+    _, html_body, _, _ = build_multi_threshold_email_content(
+        detections_by_multiplier,
+        '2026-W30',
+        include_potential_plots=False,
+        include_confirmed_plots=False,
+    )
+
+    assert html_body.count('Confirmed Not Currently Active') == 1
+    potential_table, confirmed_table = html_body.split('Confirmed flare detections', 1)
+    assert 'Confirmed Not Currently Active' not in potential_table
+    assert 'Confirmed Not Currently Active' in confirmed_table
 
 
 def test_build_multi_threshold_email_content_filters_sources_with_mdp_above_100_percent() -> None:
