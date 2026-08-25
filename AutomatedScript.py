@@ -1754,7 +1754,7 @@ def parse_args() -> argparse.Namespace:
 		'--lookback-weeks',
 		type=float,
 		default=float(os.environ.get('LOOKBACK_WEEKS', '10.0')),
-		help='Only analyze bins within this many weeks from the latest cadence point.',
+		help='Retained as scan-output metadata; quiescent backgrounds use the full filtered light curve.',
 	)
 	parser.add_argument(
 		'--detection-method',

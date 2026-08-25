@@ -242,13 +242,11 @@ def resolve_quiescent_background(source_name, time_values, flux_values, error_va
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_df = load_quiescent_cache(cache_path)
     cadence = normalize_cadence(cadence)
-    lookback_weeks = float(lookback_weeks)
 
     existing = cache_df.loc[
         (cache_df['Name'] == source_name)
         & (cache_df['cadence'] == cadence)
         & np.isclose(cache_df['percent'], float(percent), atol=1e-12, equal_nan=False)
-        & np.isclose(cache_df['lookback_weeks'], lookback_weeks, atol=1e-12, equal_nan=False)
     ]
     if not existing.empty:
         entry = existing.iloc[-1]
@@ -277,7 +275,7 @@ def resolve_quiescent_background(source_name, time_values, flux_values, error_va
         'quiescent_background': float(qb) if np.isfinite(qb) else np.nan,
         'quiescent_background_error': float(qb_err) if np.isfinite(qb_err) else np.nan,
         'detection_threshold': float(threshold) if np.isfinite(threshold) else np.nan,
-        'lookback_weeks': lookback_weeks,
+        'lookback_weeks': np.nan,
         'points_used': int(len(time_values)),
         'source_time_end_mjd': float(np.max(time_values)) if len(time_values) else np.nan,
         'updated_at_utc': datetime.now(timezone.utc).isoformat(),
@@ -290,7 +288,6 @@ def resolve_quiescent_background(source_name, time_values, flux_values, error_va
             (cache_df['Name'] == source_name)
             & (cache_df['cadence'] == cadence)
             & np.isclose(cache_df['percent'], float(percent), atol=1e-12, equal_nan=False)
-            & np.isclose(cache_df['lookback_weeks'], lookback_weeks, atol=1e-12, equal_nan=False)
         )
         cache_df = cache_df.loc[~mask].copy()
         cache_df = pd.concat([cache_df, pd.DataFrame([new_entry])], ignore_index=True)
@@ -462,6 +459,9 @@ def incremental_flare_scan(
 
     cadence_df = load_weekly_database(database_path, cadence=cadence)
     _, time_values, flux_values, error_values, average_flux = build_source_arrays(cadence_df, source_name)
+    full_time_values = time_values.copy()
+    full_flux_values = flux_values.copy()
+    full_error_values = error_values.copy()
 
     source_json_path = Path(source_json_path) if source_json_path is not None else None
     cached_json = {}
@@ -534,9 +534,9 @@ def incremental_flare_scan(
 
     qb_result = resolve_quiescent_background(
         source_name=source_name,
-        time_values=time_values,
-        flux_values=flux_values,
-        error_values=error_values,
+        time_values=full_time_values,
+        flux_values=full_flux_values,
+        error_values=full_error_values,
         percent=percent,
         cadence=cadence,
         cache_path=cache_path,
