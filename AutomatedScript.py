@@ -220,13 +220,14 @@ def plot_light_curve(
 	source_name: str,
 	output_path: Path,
 	title_suffix: str,
-	y_label: str = r'Photon Flux (ph cm$^{-2}$ s$^{-1}$)',
+	y_label: str = r'Photon Flux (ph cm$^{-2}$ s$^{-1}$) (0.2-300 GeV)',
 	time_range: tuple[float, float] | None = None,
 	flare_points: pd.DataFrame | None = None,
 	flare_intervals: list[tuple[float, float]] | None = None,
 	flare_mdp_labels: list[tuple[float, float, float]] | None = None,
 	quiescent_background: float | None = None,
 	flare_threshold: float | None = None,
+	flux_scale: float = 1.0,
 ) -> None:
 	"""
 	This function generates a light curve plot for a given source, with options to highlight flare points and intervals, and to show quiescent background and flare threshold levels. 
@@ -235,6 +236,8 @@ def plot_light_curve(
 	time_column = _resolve_plot_column(dataframe, 'time_MJD', 'new_point_mjd')
 	flux_column = _resolve_plot_column(dataframe, 'flux', 'new_point_flux')
 	error_column = _resolve_plot_column(dataframe, 'flux_error', 'new_point_flux_error')
+	if not np.isfinite(flux_scale) or flux_scale <= 0:
+		flux_scale = 1.0
 
 	if time_range is not None:
 		start_mjd, end_mjd = time_range
@@ -260,8 +263,8 @@ def plot_light_curve(
 	fig, ax = plt.subplots(figsize=(PLOT_FIGURE_WIDTH, PLOT_FIGURE_HEIGHT))
 	ax.errorbar(
 		dataframe[time_column],
-		dataframe[flux_column],
-		yerr=dataframe[error_column],
+		dataframe[flux_column] * flux_scale,
+		yerr=dataframe[error_column] * flux_scale,
 		fmt='o-',
 		color='black',
 		ecolor='gray',
@@ -273,7 +276,7 @@ def plot_light_curve(
 	# Plotting the quiescent background if the option is toggled.
 	if quiescent_background is not None and np.isfinite(quiescent_background):
 		ax.axhline(
-			quiescent_background,
+			quiescent_background * flux_scale,
 			color='tab:blue',
 			linestyle='--',
 			linewidth=1.8,
@@ -282,7 +285,7 @@ def plot_light_curve(
 	# Plotting the flare threshold if the option is toggled.
 	if flare_threshold is not None and np.isfinite(flare_threshold):
 		ax.axhline(
-			flare_threshold,
+			flare_threshold * flux_scale,
 			color='tab:orange',
 			linestyle='--',
 			linewidth=1.4,
@@ -327,7 +330,7 @@ def plot_light_curve(
 		flare_flux_column = _resolve_plot_column(flare_points, 'flux', 'new_point_flux')
 		ax.scatter(
 			flare_points[flare_time_column],
-			flare_points[flare_flux_column],
+			flare_points[flare_flux_column] * flux_scale,
 			color='crimson',
 			s=30,
 			zorder=4,
@@ -1181,6 +1184,9 @@ def build_incremental_summary_for_source(
 
 	factor_match = factor_table.loc[factor_table['Name'] == source_name]
 	factor_row = factor_match.iloc[-1] if not factor_match.empty else None
+	flux_scale = float(factor_row['Int_flux_ratio']) if factor_row is not None and 'Int_flux_ratio' in factor_row.index else 1.0
+	if not np.isfinite(flux_scale) or flux_scale <= 0:
+		flux_scale = 1.0
 	result = add_incremental_mdp99_columns(result, factor_row, cosi_background_rate=float(args.cosi_background_rate), arm_reduction=float(args.arm_reduction), average_mu=float(args.mdp99_average_mu))
 
 	INCREMENTAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1220,12 +1226,13 @@ def build_incremental_summary_for_source(
 				source_name,
 				ROOT / flare_plot_path,
 				title_suffix='incremental flare detection',
-				y_label=r'Photon Flux (ph cm$^{-2}$ s$^{-1}$)',
+				y_label=r'COSI Photon Flux (ph cm$^{-2}$ s$^{-1}$) (0.2-5 MeV)',
 				flare_points=result.loc[result['potential_flare_point']].copy(),
 				flare_intervals=flare_intervals,
 				flare_mdp_labels=flare_mdp_labels,
-				quiescent_background=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
+				quiescent_background=float(latest_row['previous_quiescent_background']) if np.isfinite(latest_row.get('previous_quiescent_background', np.nan)) else None,
 				flare_threshold=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
+				flux_scale=flux_scale,
 			)
 		if not potential_rows.empty:
 			potential_plot_path = str(plot_base.with_suffix('').with_name(f'{safe_name}_potential_plot.png').relative_to(ROOT))
@@ -1234,12 +1241,13 @@ def build_incremental_summary_for_source(
 				source_name,
 				ROOT / potential_plot_path,
 				title_suffix='potential flare points',
-				y_label=r'Photon Flux (ph cm$^{-2}$ s$^{-1}$)',
+				y_label=r'COSI Photon Flux (ph cm$^{-2}$ s$^{-1}$) (0.2-5 MeV)',
 				flare_points=result.loc[result['potential_flare_point']].copy(),
 				flare_intervals=flare_intervals,
 				flare_mdp_labels=flare_mdp_labels,
-				quiescent_background=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
+				quiescent_background=float(latest_row['previous_quiescent_background']) if np.isfinite(latest_row.get('previous_quiescent_background', np.nan)) else None,
 				flare_threshold=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
+				flux_scale=flux_scale,
 			)
 		if not confirmed_rows.empty:
 			confirmed_plot_path = str(plot_base.with_suffix('').with_name(f'{safe_name}_confirmed_plot.png').relative_to(ROOT))
@@ -1248,12 +1256,13 @@ def build_incremental_summary_for_source(
 				source_name,
 				ROOT / confirmed_plot_path,
 				title_suffix='confirmed flare activity',
-				y_label=r'Photon Flux (ph cm$^{-2}$ s$^{-1}$)',
+				y_label=r'COSI Photon Flux (ph cm$^{-2}$ s$^{-1}$) (0.2-5 MeV)',
 				flare_points=result.loc[result['confirmed_flare_active']].copy(),
 				flare_intervals=confirmed_intervals,
 				flare_mdp_labels=flare_mdp_labels,
-				quiescent_background=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
+				quiescent_background=float(latest_row['previous_quiescent_background']) if np.isfinite(latest_row.get('previous_quiescent_background', np.nan)) else None,
 				flare_threshold=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
+				flux_scale=flux_scale,
 			)
 	flare_intervals = build_active_intervals(active_rows, start_column='flare_start_mjd')
 	flare_mdp_labels = build_interval_mdp_labels(active_rows, start_column='flare_start_mjd')
