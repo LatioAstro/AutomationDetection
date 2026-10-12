@@ -32,7 +32,14 @@ notebook_pipeline = importlib.import_module('notebook_pipeline')
 
 # We check to see what the defined background rate is in the env file, and use the appropriate scaling factor
 # to ensure consistent background assumptions in incremental processing.
+
 COSI_BACKGROUND_RATE = float(os.environ.get('COSI_BACKGROUND_RATE', '0.25'))
+INSTRUMENT = os.environ.get('INSTRUMENT', 'Fermi-LAT')
+ENERGY_RANGE = {'min': 100, 'max': 100000, 'unit': 'MeV'} # Fermi energy range
+#INSTRUMENT = os.environ.get('INSTRUMENT', 'COSI')
+#ENERGY_RANGE = {'min': 0.2, 'max': 5, 'unit': 'MeV'}   # COSI energy range
+
+
 
 # ARM CUTS: 
 # 20 ct/s: 1 factor
@@ -53,6 +60,42 @@ MDP99_AVERAGE_MU = float(os.environ.get('MDP99_AVERAGE_MU', '0.3'))
 PLOT_FIGURE_WIDTH = float(os.environ.get('PLOT_FIGURE_WIDTH', '8.0'))
 PLOT_FIGURE_HEIGHT = float(os.environ.get('PLOT_FIGURE_HEIGHT', '3.2'))
 PLOT_SAVE_DPI = int(os.environ.get('PLOT_SAVE_DPI', '70'))
+
+# Band that a Fermi-LAT flux is converted to when Int_flux_ratio is applied.
+COSI_SCALED_ENERGY_RANGE = {'min': 0.2, 'max': 5, 'unit': 'MeV'}
+
+
+def resolve_flux_view(factor_row: pd.Series | None) -> dict:
+	"""
+	Decide once per source which flux is plotted and whether a COSI scale applies.
+	view is 'COSI' (native COSI data), 'COSI-scaled' (Fermi-LAT data times Int_flux_ratio), or 'Fermi-LAT' (unscaled).
+	"""
+	if INSTRUMENT == 'COSI':
+		# Native COSI data is already in COSI units and must never be rescaled.
+		return {'flux_scale': 1.0, 'view': 'COSI'}
+
+	scale = np.nan
+	if factor_row is not None and 'Int_flux_ratio' in factor_row.index:
+		try:
+			scale = float(factor_row['Int_flux_ratio'])
+		except (TypeError, ValueError):
+			pass
+	if np.isfinite(scale) and scale > 0:
+		return {'flux_scale': scale, 'view': 'COSI-scaled'}
+	return {'flux_scale': 1.0, 'view': 'Fermi-LAT'}
+
+
+def flux_axis_label(view: str) -> str:
+	"""Y-axis label for a view returned by resolve_flux_view."""
+	scaled_to_cosi = view == 'COSI-scaled'
+	band = COSI_SCALED_ENERGY_RANGE if scaled_to_cosi else ENERGY_RANGE
+	prefix = 'COSI ' if view in {'COSI', 'COSI-scaled'} else ''
+	low, high, unit = band['min'], band['max'], band['unit']
+	if unit == 'MeV' and high >= 1000:
+		energy = f'{low:g} MeV - {high / 1000:g} GeV'
+	else:
+		energy = f'{low:g} - {high:g} {unit}'
+	return rf'{prefix}Photon Flux (ph cm$^{{-2}}$ s$^{{-1}}$) [{energy}]'
 
 
 def read_source_names(path: Path) -> list[str]:
@@ -177,9 +220,7 @@ def latest_highlighted_flare_stats(
 	if interval_rows.empty:
 		return stats
 
-	flux_scale = float(factor_row['Int_flux_ratio']) if factor_row is not None and 'Int_flux_ratio' in factor_row.index else 1.0
-	if not np.isfinite(flux_scale) or flux_scale <= 0:
-		flux_scale = 1.0
+	flux_scale = resolve_flux_view(factor_row)['flux_scale']
 
 	stats['latest_highlighted_peak_flux_cosi'] = float(interval_rows['new_point_flux'].max() * flux_scale)
 	stats['latest_highlighted_average_flux_cosi'] = float(interval_rows['new_point_flux'].mean() * flux_scale)
@@ -220,7 +261,7 @@ def plot_light_curve(
 	source_name: str,
 	output_path: Path,
 	title_suffix: str,
-	y_label: str = r'Photon Flux (ph cm$^{-2}$ s$^{-1}$) (0.2-300 GeV)',
+	y_label: str | None = None,
 	time_range: tuple[float, float] | None = None,
 	flare_points: pd.DataFrame | None = None,
 	flare_intervals: list[tuple[float, float]] | None = None,
@@ -238,6 +279,8 @@ def plot_light_curve(
 	error_column = _resolve_plot_column(dataframe, 'flux_error', 'new_point_flux_error')
 	if not np.isfinite(flux_scale) or flux_scale <= 0:
 		flux_scale = 1.0
+	if y_label is None:
+		y_label = flux_axis_label('COSI' if INSTRUMENT == 'COSI' else 'Fermi-LAT')
 
 	if time_range is not None:
 		start_mjd, end_mjd = time_range
@@ -983,18 +1026,111 @@ def _merge_flare_intervals(existing_intervals: list[dict], new_intervals: list[d
 	return merged
 
 
-def write_source_json_output(
+def _region_mdp99(
+	points: list[dict],
+	start_mjd: float,
+	end_mjd: float,
 	*,
-	source_name: str,
+	factor_row: pd.Series | None,
+	cosi_background_rate: float | None,
+	arm_reduction: float | None,
+	average_mu: float | None,
+) -> float:
+	"""MDP99 over every weekly point in [start_mjd, end_mjd], using the same math as the per-row streak MDP99."""
+	if factor_row is None or cosi_background_rate is None or arm_reduction is None or average_mu is None:
+		return np.nan
+	if arm_reduction <= 0 or average_mu <= 0:
+		return np.nan
+	try:
+		lat_aeff = float(factor_row['Aeff_mean_LAT(cm2)'])
+		ph_ratio = float(factor_row['ph/s_ratio'])
+	except (KeyError, TypeError, ValueError):
+		return np.nan
+	if not (np.isfinite(lat_aeff) and np.isfinite(ph_ratio)):
+		return np.nan
+
+	fluxes = []
+	for point in points:
+		try:
+			point_mjd = float(point.get('mjd', np.nan))
+			point_flux = float(point.get('flux', np.nan))
+		except (TypeError, ValueError):
+			continue
+		if np.isfinite(point_mjd) and np.isfinite(point_flux) and start_mjd - 1e-6 <= point_mjd <= end_mjd + 1e-6:
+			fluxes.append(point_flux)
+	if not fluxes:
+		return np.nan
+
+	duration_seconds = float(len(fluxes) * SECONDS_PER_WEEK)
+	background_counts = float(duration_seconds * cosi_background_rate)
+	source_counts = float(np.mean(fluxes) * lat_aeff * ph_ratio * duration_seconds / arm_reduction)
+	if source_counts <= 0:
+		return np.nan
+	mdp99 = float(notebook_pipeline.compute_mdp99(source_counts, background_counts, average_mu=average_mu))
+	return mdp99 if np.isfinite(mdp99) else np.nan
+
+
+def _set_interval_mdp99(interval: dict, mdp99: float) -> None:
+	if np.isfinite(mdp99):
+		interval['mdp99'] = float(mdp99)
+		interval['label'] = _format_interval_label(mdp99)
+
+
+def _rise_intervals_from_points(points: list[dict]) -> list[dict]:
+	"""Rebuild Rise-method intervals from per-point RiseMethod flags (used to backfill older JSON files)."""
+	intervals: list[dict] = []
+	run_start = run_end = None
+	for point in sorted(points, key=lambda item: float(item.get('mjd', np.nan))):
+		if bool(point.get('RiseMethod', False)):
+			run_start = float(point['mjd']) if run_start is None else run_start
+			run_end = float(point['mjd'])
+		elif run_start is not None:
+			intervals.append({'start': run_start, 'end': run_end})
+			run_start = run_end = None
+	if run_start is not None:
+		intervals.append({'start': run_start, 'end': run_end})
+	return intervals
+
+
+def _union_intervals(interval_lists: list[list[dict]], point_mjds: list[float]) -> list[dict]:
+	"""
+	Union of interval lists. Intervals that overlap, or that have no weekly point between them,
+	are one continuous flaring region.
+	"""
+	combined = sorted(
+		(float(interval['start']), float(interval['end']))
+		for interval_list in interval_lists
+		for interval in interval_list
+	)
+	mjds = np.sort(np.asarray(point_mjds, dtype=float))
+	merged: list[list[float]] = []
+	for start_mjd, end_mjd in combined:
+		if merged:
+			last = merged[-1]
+			points_between = np.count_nonzero((mjds > last[1] + 1e-6) & (mjds < start_mjd - 1e-6))
+			if start_mjd <= last[1] or (mjds.size > 0 and points_between == 0):
+				last[1] = max(last[1], end_mjd)
+				continue
+		merged.append([start_mjd, end_mjd])
+	return [{'start': start_mjd, 'end': end_mjd} for start_mjd, end_mjd in merged]
+
+
+def build_flare_regions(
+	*,
 	result: pd.DataFrame,
 	factor_row: pd.Series | None,
 	json_path: Path,
-	active_rows: pd.DataFrame,
 	flare_intervals: list[tuple[float, float]],
 	flare_mdp_labels: list[tuple[float, float, float]],
-	summary_row: dict | None = None,
-) -> None:
-	json_path.parent.mkdir(parents=True, exist_ok=True)
+	confirmed_intervals: list[tuple[float, float]] | None = None,
+	cosi_background_rate: float | None = None,
+	arm_reduction: float | None = None,
+	average_mu: float | None = None,
+) -> dict:
+	"""
+	Build the stored weekly points and the three interval lists (consecutive, Rise, combined) with their MDP99 values.
+	The JSON writer and the email plots both use this, so they always show the same regions and labels.
+	"""
 	existing_payload = load_json_state(json_path)
 	existing_points = existing_payload.get('points', []) if isinstance(existing_payload, dict) else []
 	existing_intervals = existing_payload.get('flareIntervals', []) if isinstance(existing_payload, dict) else []
@@ -1038,7 +1174,115 @@ def write_source_json_output(
 			new_interval['label'] = _format_interval_label(interval_mdp99)
 		new_intervals.append(new_interval)
 
-	merged_intervals = _merge_flare_intervals(existing_intervals, new_intervals)
+	# Rise intervals get their own MDP99, computed over the full interval from the stored weekly points.
+	new_rise_intervals = [{'start': float(start_mjd), 'end': float(end_mjd)} for start_mjd, end_mjd in confirmed_intervals or []]
+	all_points = retained_points + new_points
+	mdp_kwargs = {
+		'factor_row': factor_row,
+		'cosi_background_rate': cosi_background_rate,
+		'arm_reduction': arm_reduction,
+		'average_mu': average_mu,
+	}
+
+	# Files written before the per-method lists existed held consecutive-only intervals in flareIntervals.
+	if isinstance(existing_payload, dict) and 'consecutiveIntervals' in existing_payload:
+		existing_consecutive = existing_payload.get('consecutiveIntervals', [])
+	else:
+		existing_consecutive = existing_intervals
+	if isinstance(existing_payload, dict) and 'riseIntervals' in existing_payload:
+		existing_rise = existing_payload.get('riseIntervals', [])
+	else:
+		existing_rise = _rise_intervals_from_points(retained_points)
+
+	consecutive_intervals = _merge_flare_intervals(existing_consecutive, new_intervals)
+	rise_intervals = _merge_flare_intervals(existing_rise, new_rise_intervals)
+	for interval in rise_intervals:
+		_set_interval_mdp99(interval, _region_mdp99(all_points, float(interval['start']), float(interval['end']), **mdp_kwargs))
+
+	# Combined regions (what the website shades): MDP99 is recomputed over the whole merged region.
+	merged_intervals = _union_intervals(
+		[consecutive_intervals, rise_intervals],
+		[float(point['mjd']) for point in all_points if 'mjd' in point],
+	)
+	for interval in merged_intervals:
+		start_mjd, end_mjd = float(interval['start']), float(interval['end'])
+		region_mdp99 = _region_mdp99(all_points, start_mjd, end_mjd, **mdp_kwargs)
+		if not np.isfinite(region_mdp99):
+			inside = [
+				float(item['mdp99'])
+				for item in consecutive_intervals
+				if start_mjd - 1e-6 <= float(item['start']) and float(item['end']) <= end_mjd + 1e-6 and np.isfinite(item.get('mdp99', np.nan))
+			]
+			region_mdp99 = inside[-1] if inside else np.nan
+		_set_interval_mdp99(interval, region_mdp99)
+
+	return {
+		'retained_points': retained_points,
+		'new_points': new_points,
+		'consecutive_intervals': consecutive_intervals,
+		'rise_intervals': rise_intervals,
+		'merged_intervals': merged_intervals,
+	}
+
+
+def intervals_for_plot(
+	intervals: list[dict],
+	window_start: float,
+	window_end: float,
+) -> tuple[list[tuple[float, float]], list[tuple[float, float, float]]]:
+	"""Clip stored intervals to the plotted window so full-history regions do not stretch the x-axis."""
+	spans: list[tuple[float, float]] = []
+	labels: list[tuple[float, float, float]] = []
+	for interval in intervals:
+		start_mjd, end_mjd = float(interval['start']), float(interval['end'])
+		if end_mjd < window_start or start_mjd > window_end:
+			continue
+		clipped = (max(start_mjd, window_start), min(end_mjd, window_end))
+		spans.append(clipped)
+		mdp99 = interval.get('mdp99', np.nan)
+		try:
+			mdp99 = float(mdp99)
+		except (TypeError, ValueError):
+			mdp99 = np.nan
+		if np.isfinite(mdp99):
+			labels.append((clipped[0], clipped[1], mdp99))
+	return spans, labels
+
+
+def write_source_json_output(
+	*,
+	source_name: str,
+	result: pd.DataFrame,
+	factor_row: pd.Series | None,
+	json_path: Path,
+	active_rows: pd.DataFrame,
+	flare_intervals: list[tuple[float, float]],
+	flare_mdp_labels: list[tuple[float, float, float]],
+	confirmed_intervals: list[tuple[float, float]] | None = None,
+	cosi_background_rate: float | None = None,
+	arm_reduction: float | None = None,
+	average_mu: float | None = None,
+	summary_row: dict | None = None,
+	regions: dict | None = None,
+) -> None:
+	json_path.parent.mkdir(parents=True, exist_ok=True)
+	if regions is None:
+		regions = build_flare_regions(
+			result=result,
+			factor_row=factor_row,
+			json_path=json_path,
+			flare_intervals=flare_intervals,
+			flare_mdp_labels=flare_mdp_labels,
+			confirmed_intervals=confirmed_intervals,
+			cosi_background_rate=cosi_background_rate,
+			arm_reduction=arm_reduction,
+			average_mu=average_mu,
+		)
+	retained_points = regions['retained_points']
+	new_points = regions['new_points']
+	consecutive_intervals = regions['consecutive_intervals']
+	rise_intervals = regions['rise_intervals']
+	merged_intervals = regions['merged_intervals']
 
 	latest_row = result.iloc[-1]
 	background_value = float(latest_row['previous_quiescent_background']) if np.isfinite(latest_row['previous_quiescent_background']) else np.nan
@@ -1050,10 +1294,15 @@ def write_source_json_output(
 
 	payload = {
 		'source': source_name,
+		'instrument': INSTRUMENT,
+		'energyRange': ENERGY_RANGE,
+		'fluxUnit': 'ph cm^-2 s^-1',
 		'background': background_value,
 		'threshold': threshold_value,
 		'points': retained_points + new_points,
 		'flareIntervals': merged_intervals,
+		'consecutiveIntervals': consecutive_intervals,
+		'riseIntervals': rise_intervals,
 		'_scanState': {
 			'lastProcessedMjd': float(latest_row['new_point_mjd']),
 			'lastProcessedBinCount': int(latest_row['current_bin_count']),
@@ -1076,13 +1325,10 @@ def write_source_json_output(
 			'latestActiveMdp99Percent': float(summary_row.get('latest_active_mdp99_percent', np.nan)) if np.isfinite(summary_row.get('latest_active_mdp99_percent', np.nan)) else np.nan,
 		}
 
-	if factor_row is not None and 'Int_flux_ratio' in factor_row.index:
-		try:
-			flux_scale = float(factor_row['Int_flux_ratio'])
-		except (TypeError, ValueError):
-			flux_scale = np.nan
-		if np.isfinite(flux_scale) and flux_scale > 0:
-			payload['_scanState']['fluxScale'] = flux_scale
+	if factor_row is not None:
+		resolved_flux_view = resolve_flux_view(factor_row)
+		if resolved_flux_view['view'] == 'COSI-scaled':
+			payload['_scanState']['fluxScale'] = resolved_flux_view['flux_scale']
 
 	with json_path.open('w', encoding='utf-8') as handle:
 		json.dump(payload, handle, indent=2, sort_keys=True)
@@ -1184,9 +1430,8 @@ def build_incremental_summary_for_source(
 
 	factor_match = factor_table.loc[factor_table['Name'] == source_name]
 	factor_row = factor_match.iloc[-1] if not factor_match.empty else None
-	flux_scale = float(factor_row['Int_flux_ratio']) if factor_row is not None and 'Int_flux_ratio' in factor_row.index else 1.0
-	if not np.isfinite(flux_scale) or flux_scale <= 0:
-		flux_scale = 1.0
+	flux_view = resolve_flux_view(factor_row)
+	flux_scale = flux_view['flux_scale']
 	result = add_incremental_mdp99_columns(result, factor_row, cosi_background_rate=float(args.cosi_background_rate), arm_reduction=float(args.arm_reduction), average_mu=float(args.mdp99_average_mu))
 
 	INCREMENTAL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1213,6 +1458,26 @@ def build_incremental_summary_for_source(
 	flare_mdp_labels = build_interval_mdp_labels(active_rows, start_column='flare_start_mjd')
 	confirmed_intervals = build_active_intervals(confirmed_rows, start_column='confirmed_flare_start_mjd')
 
+	# Same regions and MDP99 values that are written to the JSON for the website, clipped to this plot's window.
+	regions = build_flare_regions(
+		result=result,
+		factor_row=factor_row,
+		json_path=source_json_path,
+		flare_intervals=flare_intervals,
+		flare_mdp_labels=flare_mdp_labels,
+		confirmed_intervals=confirmed_intervals,
+		cosi_background_rate=float(args.cosi_background_rate),
+		arm_reduction=float(args.arm_reduction),
+		average_mu=float(args.mdp99_average_mu),
+	)
+	plot_window_start = float(result['new_point_mjd'].min())
+	plot_window_end = float(result['new_point_mjd'].max())
+	combined_spans, combined_labels = intervals_for_plot(regions['merged_intervals'], plot_window_start, plot_window_end)
+	rise_spans, rise_labels = intervals_for_plot(regions['rise_intervals'], plot_window_start, plot_window_end)
+	any_flare_points = result.loc[
+		result['potential_flare_point'] | result['flare_active'] | result['confirmed_flare_active']
+	].copy()
+
 	plot_base = INCREMENTAL_OUTPUT_DIR / f'{safe_name}'
 	plot_base.mkdir(parents=True, exist_ok=True)
 	flare_plot_path = ''
@@ -1226,10 +1491,10 @@ def build_incremental_summary_for_source(
 				source_name,
 				ROOT / flare_plot_path,
 				title_suffix='incremental flare detection',
-				y_label=r'COSI Photon Flux (ph cm$^{-2}$ s$^{-1}$) (0.2-5 MeV)',
-				flare_points=result.loc[result['potential_flare_point']].copy(),
-				flare_intervals=flare_intervals,
-				flare_mdp_labels=flare_mdp_labels,
+				y_label=flux_axis_label(flux_view['view']),
+				flare_points=any_flare_points,
+				flare_intervals=combined_spans,
+				flare_mdp_labels=combined_labels,
 				quiescent_background=float(latest_row['previous_quiescent_background']) if np.isfinite(latest_row.get('previous_quiescent_background', np.nan)) else None,
 				flare_threshold=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
 				flux_scale=flux_scale,
@@ -1241,10 +1506,10 @@ def build_incremental_summary_for_source(
 				source_name,
 				ROOT / potential_plot_path,
 				title_suffix='potential flare points',
-				y_label=r'COSI Photon Flux (ph cm$^{-2}$ s$^{-1}$) (0.2-5 MeV)',
-				flare_points=result.loc[result['potential_flare_point']].copy(),
-				flare_intervals=flare_intervals,
-				flare_mdp_labels=flare_mdp_labels,
+				y_label=flux_axis_label(flux_view['view']),
+				flare_points=any_flare_points,
+				flare_intervals=combined_spans,
+				flare_mdp_labels=combined_labels,
 				quiescent_background=float(latest_row['previous_quiescent_background']) if np.isfinite(latest_row.get('previous_quiescent_background', np.nan)) else None,
 				flare_threshold=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
 				flux_scale=flux_scale,
@@ -1256,10 +1521,10 @@ def build_incremental_summary_for_source(
 				source_name,
 				ROOT / confirmed_plot_path,
 				title_suffix='confirmed flare activity',
-				y_label=r'COSI Photon Flux (ph cm$^{-2}$ s$^{-1}$) (0.2-5 MeV)',
+				y_label=flux_axis_label(flux_view['view']),
 				flare_points=result.loc[result['confirmed_flare_active']].copy(),
-				flare_intervals=confirmed_intervals,
-				flare_mdp_labels=flare_mdp_labels,
+				flare_intervals=rise_spans,
+				flare_mdp_labels=rise_labels,
 				quiescent_background=float(latest_row['previous_quiescent_background']) if np.isfinite(latest_row.get('previous_quiescent_background', np.nan)) else None,
 				flare_threshold=float(latest_row['flare_flux_threshold']) if np.isfinite(latest_row.get('flare_flux_threshold', np.nan)) else None,
 				flux_scale=flux_scale,
@@ -1278,9 +1543,6 @@ def build_incremental_summary_for_source(
 	if factor_row is None:
 		print(f'{source_name}: no factor-table row found; MDP99 is unavailable for this source.')
 
-	flux_scale = float(factor_row['Int_flux_ratio']) if factor_row is not None and 'Int_flux_ratio' in factor_row.index else 1.0
-	if not np.isfinite(flux_scale) or flux_scale <= 0:
-		flux_scale = 1.0
 	latest_flare_stats = latest_highlighted_flare_stats(
 		result,
 		active_rows,
@@ -1370,7 +1632,12 @@ def build_incremental_summary_for_source(
 		 active_rows=active_rows,
 		 flare_intervals=flare_intervals,
 		 flare_mdp_labels=flare_mdp_labels,
+		 confirmed_intervals=confirmed_intervals,
+		 cosi_background_rate=float(args.cosi_background_rate),
+		 arm_reduction=float(args.arm_reduction),
+		 average_mu=float(args.mdp99_average_mu),
 		 summary_row=summary_row,
+		 regions=regions,
 	)
 	print(f'Wrote source JSON to {source_json_path.relative_to(ROOT)}')
 	print(f'Wrote incremental scan to {output_path.relative_to(ROOT)}')
