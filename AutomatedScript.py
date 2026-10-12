@@ -317,22 +317,22 @@ def plot_light_curve(
 		label='Weekly flux',
 	)
 	# Plotting the quiescent background if the option is toggled.
+	# Line colors and styles match the website plot (colorblind-safe, solid thick background, dotted threshold on top).
 	if quiescent_background is not None and np.isfinite(quiescent_background):
 		ax.axhline(
 			quiescent_background * flux_scale,
-			color='tab:blue',
-			linestyle='--',
-			linewidth=1.8,
+			color='#56B4E9',
+			linestyle='-',
+			linewidth=4,
 			label='Quiescent background',
 		)
 	# Plotting the flare threshold if the option is toggled.
 	if flare_threshold is not None and np.isfinite(flare_threshold):
 		ax.axhline(
 			flare_threshold * flux_scale,
-			color='tab:orange',
-			linestyle='--',
-			linewidth=1.4,
-			alpha=0.55,
+			color='#4B1A7A',
+			linestyle=':',
+			linewidth=2.5,
 			label='Flare threshold',
 		)
 	# If we have a flare interval, we highlight it with a shaded region. 
